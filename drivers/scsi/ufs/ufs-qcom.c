@@ -35,6 +35,8 @@
 #define MAX_PROP_SIZE		   32
 #define VDDP_REF_CLK_MIN_UV        1200000
 #define VDDP_REF_CLK_MAX_UV        1200000
+/* TODO: further tuning for this parameter may be required */
+#define UFS_QCOM_PM_QOS_UNVOTE_TIMEOUT_US	(10000) /* microseconds */
 
 #define UFS_QCOM_DEFAULT_DBG_PRINT_EN	\
 	(UFS_QCOM_DBG_PRINT_REGS_EN | UFS_QCOM_DBG_PRINT_TEST_BUS_EN)
@@ -856,6 +858,10 @@ static int ufs_qcom_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 			ufs_qcom_config_vreg(hba->dev,
 					host->vccq_parent, false);
 
+		if (host->vccq2_parent && !hba->auto_bkops_enabled)
+			ufs_qcom_config_vreg(hba->dev,
+					host->vccq2_parent, false);
+
 		if (ufs_qcom_is_link_off(hba)) {
 			/* Assert PHY soft reset */
 			ufs_qcom_assert_reset(hba);
@@ -894,6 +900,9 @@ static int ufs_qcom_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 
 	if (host->vccq_parent)
 		ufs_qcom_config_vreg(hba->dev, host->vccq_parent, true);
+
+	if (host->vccq2_parent)
+		ufs_qcom_config_vreg(hba->dev, host->vccq2_parent, true);
 
 	err = ufs_qcom_enable_lane_clks(host);
 	if (err)
@@ -1273,8 +1282,11 @@ static void ufs_qcom_dev_ref_clk_ctrl(struct ufs_qcom_host *host, bool enable)
 
 		writel_relaxed(temp, host->dev_ref_clk_ctrl_mmio);
 
-		/* ensure that ref_clk is enabled/disabled before we return */
-		wmb();
+		/*
+		 * Make sure the write to ref_clk reaches the destination and
+		 * not stored in a Write Buffer (WB).
+		 */
+		readl(host->dev_ref_clk_ctrl_mmio);
 
 		/*
 		 * If we call hibern8 exit after this, we need to make sure that
@@ -1720,7 +1732,8 @@ static void ufs_qcom_pm_qos_unvote_work(struct work_struct *work)
 	group->state = PM_QOS_UNVOTED;
 	spin_unlock_irqrestore(host->hba->host->host_lock, flags);
 
-	pm_qos_update_request(&group->req, PM_QOS_DEFAULT_VALUE);
+	pm_qos_update_request_timeout(&group->req,
+		group->latency_us, UFS_QCOM_PM_QOS_UNVOTE_TIMEOUT_US);
 }
 
 static ssize_t ufs_qcom_pm_qos_enable_show(struct device *dev,
@@ -2074,6 +2087,8 @@ static int ufs_qcom_parse_reg_info(struct ufs_qcom_host *host, char *name,
 			vreg->min_uV = VDDP_REF_CLK_MIN_UV;
 		else if (!strcmp(name, "qcom,vccq-parent"))
 			vreg->min_uV = 0;
+		else if (!strcmp(name, "qcom,vccq2-parent"))
+			vreg->min_uV = 0;
 		ret = 0;
 	}
 
@@ -2085,6 +2100,8 @@ static int ufs_qcom_parse_reg_info(struct ufs_qcom_host *host, char *name,
 		if (!strcmp(name, "qcom,vddp-ref-clk"))
 			vreg->max_uV = VDDP_REF_CLK_MAX_UV;
 		else if (!strcmp(name, "qcom,vccq-parent"))
+			vreg->max_uV = 0;
+		else if (!strcmp(name, "qcom,vccq2-parent"))
 			vreg->max_uV = 0;
 		ret = 0;
 	}
@@ -2233,6 +2250,17 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 		}
 	}
 
+	err = ufs_qcom_parse_reg_info(host, "qcom,vccq2-parent",
+				      &host->vccq2_parent);
+	if (host->vccq2_parent) {
+		err = ufs_qcom_config_vreg(hba->dev, host->vccq2_parent, true);
+		if (err) {
+			dev_err(dev, "%s: failed vccq2-parent set load: %d\n",
+				__func__, err);
+			goto out_disable_vddp;
+		}
+	}
+
 	err = ufs_qcom_init_lane_clks(host);
 	if (err)
 		goto out_set_load_vccq_parent;
@@ -2265,6 +2293,8 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 out_set_load_vccq_parent:
 	if (host->vccq_parent)
 		ufs_qcom_config_vreg(hba->dev, host->vccq_parent, false);
+	if (host->vccq2_parent)
+		ufs_qcom_config_vreg(hba->dev, host->vccq2_parent, false);
 out_disable_vddp:
 	if (host->vddp_ref_clk)
 		ufs_qcom_disable_vreg(dev, host->vddp_ref_clk);

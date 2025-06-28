@@ -51,9 +51,15 @@ ifeq ($(KERNEL_BUILD), 0)
 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
 	endif
 	ifeq ($(CONFIG_ARCH_BENGAL), y)
-		include $(AUDIO_ROOT)/config/bengalauto.conf
-		export
-		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+			ifdef CONFIG_TARGET_PROJECT_K7T
+				include $(AUDIO_ROOT)/config/spesauto.conf
+				export
+				INCS    +=  -include $(AUDIO_ROOT)/config/spesautoconf.h
+			else
+				include $(AUDIO_ROOT)/config/bengalauto.conf
+				export
+				INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+			endif
 	endif
 	ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
 		include $(AUDIO_ROOT)/config/sm8150auto.conf
@@ -163,6 +169,21 @@ ifdef CONFIG_SND_SOC_WSA881X
 	WSA881X_OBJS += wsa881x-temp-sensor.o
 endif
 
+ifdef CONFIG_SND_SOC_AW87XXX
+	AW87XXX_OBJS += aw87xxx/aw87xxx.o
+	AW87XXX_OBJS += aw87xxx/aw_device.o
+	AW87XXX_OBJS += aw87xxx/aw_monitor.o
+	AW87XXX_OBJS += aw87xxx/aw_bin_parse.o
+	AW87XXX_OBJS += aw87xxx/aw_dsp.o
+	AW87XXX_OBJS += aw87xxx/aw_acf_bin.o
+endif
+
+ifdef CONFIG_SND_SOC_FS1599
+	FS1599_OBJS += fs1599/fsm_core.o
+	FS1599_OBJS += fs1599/fs1599.o
+	FS1599_OBJS += fs1599/fsm_i2c.o
+endif
+
 ifdef CONFIG_SND_SOC_WSA881X_ANALOG
 	WSA881X_ANALOG_OBJS += wsa881x-analog.o
 	WSA881X_ANALOG_OBJS += wsa881x-tables-analog.o
@@ -170,15 +191,7 @@ ifdef CONFIG_SND_SOC_WSA881X_ANALOG
 ifdef CONFIG_SND_SOC_BENGAL
 	WSA881X_ANALOG_OBJS += wsa881x-temp-sensor.o
 endif
-
-ifdef CONFIG_SND_SOC_AW87359
-	AW87359_OBJS += aw87359_audio.o
 endif
-
-ifdef CONFIG_SND_SOC_AW87519
-	AW87519_OBJS += aw87519_audio.o
-endif
-
 ifdef CONFIG_SND_SOC_MSM_STUB
 	STUB_OBJS += msm_stub.o
 endif
@@ -227,6 +240,7 @@ CDEFINES +=	-DANI_LITTLE_BYTE_ENDIAN \
 		-DANI_OS_TYPE_ANDROID=6 \
 		-DPTT_SOCK_SVC_ENABLE \
 		-Wall\
+		-Wno-enum-conversion \
 		-D__linux__
 
 KBUILD_CPPFLAGS += $(CDEFINES)
@@ -273,6 +287,12 @@ wcd9335_dlkm-y := $(WCD9335_OBJS)
 obj-$(CONFIG_SND_SOC_WSA881X) += wsa881x_dlkm.o
 wsa881x_dlkm-y := $(WSA881X_OBJS)
 
+obj-$(CONFIG_SND_SOC_AW87XXX) += aw87xxx_dlkm.o
+aw87xxx_dlkm-y := $(AW87XXX_OBJS)
+
+obj-$(CONFIG_SND_SOC_FS1599) += fs1599_dlkm.o
+fs1599_dlkm-y := $(FS1599_OBJS)
+
 obj-$(CONFIG_SND_SOC_WSA881X_ANALOG) += wsa881x_analog_dlkm.o
 wsa881x_analog_dlkm-y := $(WSA881X_ANALOG_OBJS)
 
@@ -290,12 +310,3 @@ mbhc_dlkm-y := $(MBHC_OBJS)
 
 obj-$(CONFIG_SND_SOC_MSM_HDMI_CODEC_RX) += hdmi_dlkm.o
 hdmi_dlkm-y := $(HDMICODEC_OBJS)
-
-obj-$(CONFIG_SND_SOC_AW87359) += aw87359_audio_dlkm.o
-aw87359_audio_dlkm-y := $(AW87359_OBJS)
-
-obj-$(CONFIG_SND_SOC_AW87519) += aw87519_audio_dlkm.o
-aw87519_audio_dlkm-y := $(AW87519_OBJS)
-
-# inject some build related information
-DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

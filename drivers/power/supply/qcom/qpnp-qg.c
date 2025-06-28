@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
-<<<<<<< HEAD
- * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
- * Copyright (C) 2020 XiaoMi, Inc.
-=======
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
->>>>>>> 95be18797bfcfae5988703e848fa17aa5942ec8e
  */
 
 #define pr_fmt(fmt)	"QG-K: %s: " fmt, __func__
@@ -33,7 +28,6 @@
 #include <linux/qpnp/qpnp-revid.h>
 #include <uapi/linux/qg.h>
 #include <uapi/linux/qg-profile.h>
-#include <linux/reboot.h>
 #include "fg-alg.h"
 #include "qg-sdam.h"
 #include "qg-core.h"
@@ -43,7 +37,7 @@
 #include "qg-battery-profile.h"
 #include "qg-defs.h"
 
-static int qg_debug_mask = 0xff;
+static int qg_debug_mask;
 
 static int qg_esr_mod_count = 30;
 static ssize_t esr_mod_count_show(struct device *dev, struct device_attribute
@@ -2163,9 +2157,6 @@ static int qg_psy_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		rc = qg_get_battery_capacity(chip, &pval->intval);
 		break;
-	case POWER_SUPPLY_PROP_BATTERY_ID:
-		pval->intval = chip->batt_id;
-		break;
 	case POWER_SUPPLY_PROP_CAPACITY_RAW:
 		pval->intval = chip->sys_soc;
 		break;
@@ -2234,7 +2225,9 @@ static int qg_psy_get_property(struct power_supply *psy,
 			pval->intval = (int)temp;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
-		pval->intval = 6000000;
+		rc = qg_get_nominal_capacity((int *)&temp, 250, true);
+		if (!rc)
+			pval->intval = (int)temp;
 		break;
 	case POWER_SUPPLY_PROP_CYCLE_COUNTS:
 		rc = get_cycle_counts(chip->counter, &pval->strval);
@@ -2319,7 +2312,6 @@ static int qg_property_is_writeable(struct power_supply *psy,
 
 static enum power_supply_property qg_psy_props[] = {
 	POWER_SUPPLY_PROP_CAPACITY,
-	POWER_SUPPLY_PROP_BATTERY_ID,
 	POWER_SUPPLY_PROP_CAPACITY_RAW,
 	POWER_SUPPLY_PROP_REAL_CAPACITY,
 	POWER_SUPPLY_PROP_TEMP,
@@ -2413,7 +2405,7 @@ static int qg_charge_full_update(struct qpnp_qg *chip)
 				chip->msoc, health, chip->charge_full,
 				chip->charge_done);
 	if (chip->charge_done && !chip->charge_full) {
-		if (chip->msoc >= 99 && (health == POWER_SUPPLY_HEALTH_GOOD || health == POWER_SUPPLY_HEALTH_COOL)) {
+		if (chip->msoc >= 99 && health == POWER_SUPPLY_HEALTH_GOOD) {
 			chip->charge_full = true;
 			qg_dbg(chip, QG_DEBUG_STATUS, "Setting charge_full (0->1) @ msoc=%d\n",
 					chip->msoc);
@@ -2614,7 +2606,6 @@ static int qg_battery_status_update(struct qpnp_qg *chip)
 		if (rc < 0)
 			pr_err("Failed in battery-insertion rc=%d\n", rc);
 	} else if (!chip->battery_missing && !prop.intval) {
-		kernel_power_off();
 		pr_warn("Battery removed!\n");
 		rc = qg_handle_battery_removal(chip);
 		if (rc < 0)
@@ -3157,13 +3148,7 @@ static int qg_load_battery_profile(struct qpnp_qg *chip)
 static int qg_setup_battery(struct qpnp_qg *chip)
 {
 	int rc;
-	get_batt_id_ohm(chip, &chip->batt_id_ohm);
-	if (chip->batt_id_ohm >= 313000 && chip->batt_id_ohm <= 350000)
-		chip->batt_id = 1;
-	else if (chip->batt_id_ohm >= 65000 && chip->batt_id_ohm <= 73000)
-		chip->batt_id = 2;
-	else
-		chip->batt_id = 0 ;
+
 	if (!is_battery_present(chip)) {
 		qg_dbg(chip, QG_DEBUG_PROFILE, "Battery Missing!\n");
 		chip->battery_missing = true;
@@ -4753,7 +4738,7 @@ static int qpnp_qg_probe(struct platform_device *pdev)
 	chip->batt_age_level = -EINVAL;
 	chip->qg_charge_counter = -EINVAL;
 
-	chip->qg_version = (u8)(uintptr_t)of_device_get_match_data(&pdev->dev);
+	chip->qg_version = (enum qg_version)of_device_get_match_data(&pdev->dev);
 
 	switch (chip->qg_version) {
 	case QG_LITE:

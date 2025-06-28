@@ -211,11 +211,6 @@ QDF_STATUS reg_send_scheduler_msg_sb(struct wlan_objmgr_psoc *psoc,
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	if (!pdev_priv_obj->chan_list_recvd) {
-		reg_err("Empty channel list");
-		return QDF_STATUS_E_FAILURE;
-	}
-
 	status = wlan_objmgr_psoc_try_get_ref(psoc, WLAN_REGULATORY_SB_ID);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		reg_err("error taking psoc ref cnt");
@@ -269,11 +264,6 @@ QDF_STATUS reg_send_scheduler_msg_nb(struct wlan_objmgr_psoc *psoc,
 
 	if (!pdev_priv_obj->pdev_opened) {
 		reg_err("hlos not initialized");
-		return QDF_STATUS_E_FAILURE;
-	}
-
-	if (!pdev_priv_obj->chan_list_recvd) {
-		reg_err("Empty channel list");
 		return QDF_STATUS_E_FAILURE;
 	}
 

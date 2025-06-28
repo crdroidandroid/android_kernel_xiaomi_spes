@@ -409,6 +409,14 @@ static struct dev_config afe_loopback_tx_cfg[] = {
 };
 
 static int msm_vi_feed_tx_ch = 2;
+#ifdef CONFIG_SND_SOC_AW87XXX
+static const char *const mode_function[] = { "Music", "Voice", "Voip",
+		"Ringtone", "Ringtone_hs", "Lowpower", "Bypass", "Mmi",
+		"Fm", "Notification", "Receiver", "Off" };
+static const char *const aw_spin[] = {"spin_0", "spin_90",
+					   "spin_180", "spin_270"};
+static unsigned int g_spin_value = 0;
+#endif /* CONFIG_SND_SOC_AW87XXX */
 static const char *const vi_feed_ch_text[] = {"One", "Two"};
 static char const *bit_format_text[] = {"S16_LE", "S24_LE", "S24_3LE",
 					  "S32_LE"};
@@ -547,6 +555,10 @@ static SOC_ENUM_SINGLE_EXT_DECL(bt_sample_rate, bt_sample_rate_text);
 static SOC_ENUM_SINGLE_EXT_DECL(bt_sample_rate_rx, bt_sample_rate_rx_text);
 static SOC_ENUM_SINGLE_EXT_DECL(bt_sample_rate_tx, bt_sample_rate_tx_text);
 static SOC_ENUM_SINGLE_EXT_DECL(afe_loopback_tx_chs, afe_loopback_tx_ch_text);
+#ifdef CONFIG_SND_SOC_AW87XXX
+static SOC_ENUM_SINGLE_EXT_DECL(aw87xxx_mode, mode_function);
+static SOC_ENUM_SINGLE_EXT_DECL(aw_spin_mode, aw_spin);
+#endif /* CONFIG_SND_SOC_AW87XXX */
 
 static bool is_initial_boot;
 static bool codec_reg_done;
@@ -572,7 +584,8 @@ static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.swap_gnd_mic = NULL,
 	.hs_ext_micbias = true,
 	.key_code[0] = KEY_MEDIA,
-#if defined(CONFIG_MACH_XIAOMI_LIME) || defined(CONFIG_MACH_POCO_CITRUS)
+/*import xiaomi headset patch begin */
+#if defined(CONFIG_XIAOMI_AUDIO_MBHC)
 	.key_code[1] = BTN_1,
 	.key_code[2] = BTN_2,
 	.key_code[3] = 0,
@@ -581,6 +594,7 @@ static struct wcd_mbhc_config wcd_mbhc_cfg = {
 	.key_code[2] = KEY_VOLUMEUP,
 	.key_code[3] = KEY_VOLUMEDOWN,
 #endif
+/*import xiaomi headset patch end */
 	.key_code[4] = 0,
 	.key_code[5] = 0,
 	.key_code[6] = 0,
@@ -1014,6 +1028,133 @@ static int msm_vi_feed_tx_ch_put(struct snd_kcontrol *kcontrol,
 	pr_debug("%s: msm_vi_feed_tx_ch = %d\n", __func__, msm_vi_feed_tx_ch);
 	return 1;
 }
+
+#ifdef CONFIG_SND_SOC_AW87XXX
+extern int aw87xxx_show_current_profile_index(int dev_index);
+struct snd_soc_card *pcard = NULL;
+static int aw87xxx_spk_pa_mode_get(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	int current_mode = 0;
+	current_mode = aw87xxx_show_current_profile_index(1);
+	ucontrol->value.integer.value[0] = current_mode;
+	pr_debug("%s: get mode:%d\n", __func__, current_mode);
+	return 0;
+}
+
+static int aw87xxx_spk_pa_mode_set(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	int set_mode;
+	set_mode = ucontrol->value.integer.value[0];
+	if (pcard)
+		pcard->aw87xxx_spk_mode = set_mode;
+	pr_debug("%s: set mode:%d success", __func__, set_mode);
+	return 0;
+}
+
+static int aw87xxx_rcv_pa_mode_get(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	int current_mode = 0;
+	current_mode = aw87xxx_show_current_profile_index(0);
+	ucontrol->value.integer.value[0] = current_mode;
+	pr_debug("%s: get mode:%d\n", __func__, current_mode);
+	return 0;
+}
+
+static int aw87xxx_rcv_pa_mode_set(struct snd_kcontrol *kcontrol,
+		struct snd_ctl_elem_value *ucontrol)
+{
+	int set_mode;
+	set_mode = ucontrol->value.integer.value[0];
+	if (pcard)
+		pcard->aw87xxx_rcv_mode = set_mode;
+
+	pr_debug("%s: set mode:%d success", __func__, set_mode);
+	return 0;
+}
+
+#define AW_MSG_ID_SPIN      (0x10013D2E)
+#define AW_DSP_TRY_TIME     (3)
+#define AW_10000_US         (10000)
+static DEFINE_MUTEX(g_aw_dsp_msg_lock);
+static DEFINE_MUTEX(g_aw_dsp_lock);
+extern int afe_get_topology(int port_id);
+extern int aw_send_afe_cal_apr(uint32_t param_id,
+	void *buf, int cmd_size, bool write);
+extern int aw_check_dsp_ready(void);
+enum {
+	AW_SPIN_0 = 0,
+	AW_SPIN_90,
+	AW_SPIN_180,
+	AW_SPIN_270,
+	AW_SPIN_MAX,
+};
+static int aw_set_spin(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	int ret = -EINVAL;
+	uint32_t ctrl_value = 0;
+	int try = 0;
+	//change the channel according to the command
+	ctrl_value = ucontrol->value.integer.value[0];
+
+	if (ctrl_value >= AW_SPIN_MAX) {
+		pr_err("spin [%d] unsupported ", ctrl_value);
+		return -EINVAL;
+	}
+
+	mutex_lock(&g_aw_dsp_lock);
+	while (try < AW_DSP_TRY_TIME) {
+		if (aw_check_dsp_ready()) {
+			ret = aw_send_afe_cal_apr(AW_MSG_ID_SPIN, &ctrl_value, sizeof(int32_t), true);
+			mutex_unlock(&g_aw_dsp_lock);
+			return ret;
+		} else {
+			try++;
+			usleep_range(AW_10000_US, AW_10000_US + 10);
+			pr_info("afe topo not ready try again");
+		}
+	}
+	mutex_unlock(&g_aw_dsp_lock);
+
+	if (ret) {
+		pr_err("write spin failed ");
+		return ret;
+	}
+	pr_debug("write spin done ctrl_value=%d", ctrl_value);
+	g_spin_value = ctrl_value;
+	return 0;
+}
+
+static int aw_get_spin(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	int ret = -EINVAL;
+	uint32_t ctrl_value = 0;
+	int try = 0;
+
+	mutex_lock(&g_aw_dsp_lock);
+	while (try < AW_DSP_TRY_TIME) {
+		if (aw_check_dsp_ready()) {
+			ret = aw_send_afe_cal_apr(AW_MSG_ID_SPIN, &ctrl_value, sizeof(int32_t), false);
+			ucontrol->value.integer.value[0] = ctrl_value;
+			pr_debug("read spin done ctrl_value=%d", ctrl_value);
+			mutex_unlock(&g_aw_dsp_lock);
+			return ret;
+		} else {
+			try++;
+			usleep_range(AW_10000_US, AW_10000_US + 10);
+			pr_info("afe topo not ready try again");
+		}
+	}
+	ucontrol->value.integer.value[0] = ctrl_value;
+	mutex_unlock(&g_aw_dsp_lock);
+	pr_debug("read spin done ctrl_value=%d", ctrl_value);
+	return 0;
+}
+#endif /* CONFIG_SND_SOC_AW87XXX */
 
 static int proxy_rx_ch_get(struct snd_kcontrol *kcontrol,
 			       struct snd_ctl_elem_value *ucontrol)
@@ -2885,109 +3026,6 @@ static int msm_bt_sample_rate_tx_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-#if defined(CONFIG_MACH_XIAOMI_LIME) || defined(CONFIG_MACH_POCO_CITRUS)
-//add for awinic pa 87359
-extern unsigned char aw87359_audio_dspk(void);
-extern unsigned char aw87359_audio_abrcv(void);
-extern unsigned char aw87359_audio_off(void);
-static int aw87359_spk_control = 0;
-static int aw87359_rcv_control = 0;
-static const char *const ext_top_speaker_amp_function[] = { "Off", "On" };
-static const char *const ext_receiver_amp_function[] = { "Off", "On" };
-static int ext_top_speaker_amp_get(struct snd_kcontrol *kcontrol,
-		struct snd_ctl_elem_value *ucontrol)
-{
-	ucontrol->value.integer.value[0] = aw87359_spk_control;
-	pr_debug("%s: aw87359_spk_control = %d\n", __func__,
-		aw87359_spk_control);
-	return 0;
-}
-
-static int ext_top_speaker_amp_put(struct snd_kcontrol *kcontrol,
-		struct snd_ctl_elem_value *ucontrol)
-{
-	if(ucontrol->value.integer.value[0] == aw87359_spk_control){
-		return 1;
-	}
-	aw87359_spk_control = ucontrol->value.integer.value[0];
-	if(ucontrol->value.integer.value[0]) {
-		aw87359_audio_dspk();
-	} else {
-		aw87359_audio_off();
-	}
-	pr_debug("%s: value.integer.value = %d\n", __func__,
-		ucontrol->value.integer.value[0]);
-	return 0;
-	}
-
-static int ext_receiver_amp_get(struct snd_kcontrol *kcontrol,
-		struct snd_ctl_elem_value *ucontrol)
-{
-	ucontrol->value.integer.value[0] = aw87359_rcv_control;
-	pr_debug("%s: aw87359_rcv_control = %d\n", __func__,
-		aw87359_rcv_control);
-	return 0;
-}
-
-static int ext_receiver_amp_put(struct snd_kcontrol *kcontrol,
-		struct snd_ctl_elem_value *ucontrol)
-{
-	if(ucontrol->value.integer.value[0] == aw87359_rcv_control){
-		return 1;
-	}
-	aw87359_rcv_control = ucontrol->value.integer.value[0];
-	if(ucontrol->value.integer.value[0]) {
-		aw87359_audio_abrcv();
-	} else {
-		aw87359_audio_off();
-	}
-	pr_debug("%s: value.integer.value = %d\n", __func__,
-		ucontrol->value.integer.value[0]);
-	return 0;
-}
-
-//add for awinic pa 87519
-extern unsigned char aw87519_audio_kspk(void);
-extern unsigned char aw87519_audio_off(void);
-static int aw87519_spk_control = 0;
-static const char *const ext_bottom_speaker_amp_function[] = { "Off", "On" };
-static int ext_bottom_speaker_amp_get(struct snd_kcontrol *kcontrol,
-		struct snd_ctl_elem_value *ucontrol)
-{
-	ucontrol->value.integer.value[0] = aw87519_spk_control;
-	pr_debug("%s: aw87519_spk_control = %d\n", __func__,
-		aw87519_spk_control);
-	return 0;
-}
-
-static int ext_bottom_speaker_amp_put(struct snd_kcontrol *kcontrol,
-		struct snd_ctl_elem_value *ucontrol)
-{
-	if(ucontrol->value.integer.value[0] == aw87519_spk_control){
-		return 1;
-	}
-	aw87519_spk_control = ucontrol->value.integer.value[0];
-	if(ucontrol->value.integer.value[0]) {
-		aw87519_audio_kspk();
-	} else {
-		aw87519_audio_off();
-	}
-	pr_debug("%s: value.integer.value = %d\n", __func__,
-		ucontrol->value.integer.value[0]);
-	return 0;
-}
-
-//add for Awinic pa 87359 & 87519
-static const struct soc_enum msm_snd_enum[] = {
-	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(ext_top_speaker_amp_function),
-				ext_top_speaker_amp_function),
-	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(ext_receiver_amp_function),
-				ext_receiver_amp_function),
-	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(ext_bottom_speaker_amp_function),
-				ext_bottom_speaker_amp_function),
-};
-#endif
-
 static const struct snd_kcontrol_new msm_int_snd_controls[] = {
 	SOC_ENUM_EXT("RX_CDC_DMA_RX_0 Channels", rx_cdc_dma_rx_0_chs,
 			cdc_dma_rx_ch_get, cdc_dma_rx_ch_put),
@@ -3021,15 +3059,6 @@ static const struct snd_kcontrol_new msm_int_snd_controls[] = {
 			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
 	SOC_ENUM_EXT("RX_CDC_DMA_RX_5 Format", rx_cdc_dma_rx_5_format,
 			cdc_dma_rx_format_get, cdc_dma_rx_format_put),
-#if defined(CONFIG_MACH_XIAOMI_LIME) || defined(CONFIG_MACH_POCO_CITRUS)
-//add for Awinic pa 87359 & 87519
-	SOC_ENUM_EXT("Ext_TOP_Speaker_Amp", msm_snd_enum[0],
-			ext_top_speaker_amp_get, ext_top_speaker_amp_put),
-	SOC_ENUM_EXT("Ext_Receiver_Amp", msm_snd_enum[1],
-			ext_receiver_amp_get, ext_receiver_amp_put),
-	SOC_ENUM_EXT("Ext_BOTTOM_Speaker_Amp", msm_snd_enum[2],
-			ext_bottom_speaker_amp_get, ext_bottom_speaker_amp_put),
-#endif
 	SOC_ENUM_EXT("TX_CDC_DMA_TX_0 Format", tx_cdc_dma_tx_0_format,
 			cdc_dma_tx_format_get, cdc_dma_tx_format_put),
 	SOC_ENUM_EXT("TX_CDC_DMA_TX_3 Format", tx_cdc_dma_tx_3_format,
@@ -3118,6 +3147,14 @@ static const struct snd_kcontrol_new msm_common_snd_controls[] = {
 			afe_loopback_tx_ch_get, afe_loopback_tx_ch_put),
 	SOC_ENUM_EXT("VI_FEED_TX Channels", vi_feed_tx_chs,
 			msm_vi_feed_tx_ch_get, msm_vi_feed_tx_ch_put),
+#ifdef CONFIG_SND_SOC_AW87XXX
+	SOC_ENUM_EXT("aw87xxx_rcv_switch",aw87xxx_mode ,
+			aw87xxx_rcv_pa_mode_get, aw87xxx_rcv_pa_mode_set),
+	SOC_ENUM_EXT("aw87xxx_spk_switch",aw87xxx_mode ,
+			aw87xxx_spk_pa_mode_get, aw87xxx_spk_pa_mode_set),
+	SOC_ENUM_EXT("aw_spin_switch",aw_spin_mode ,
+			aw_get_spin, aw_set_spin),
+#endif /* CONFIG_SND_SOC_AW87XXX */
 };
 
 static const struct snd_kcontrol_new msm_tdm_snd_controls[] = {
@@ -4378,6 +4415,14 @@ static void msm_add_auxpcm_snd_controls(struct snd_soc_component *component)
 }
 #endif
 
+#ifdef CONFIG_SND_SOC_AW87XXX
+extern int aw87xxx_add_codec_controls(void *codec);
+#endif /*CONFIG_SND_SOC_AWINIC_AW87XXX*/
+
+#if defined(CONFIG_SND_SOC_FS1599)
+extern void fsm_add_codec_controls(struct snd_soc_component *codec);
+#endif /*CONFIG_SND_SOC_FS1599*/
+
 static int msm_int_audrx_init(struct snd_soc_pcm_runtime *rtd)
 {
 	int ret = -EINVAL;
@@ -4414,6 +4459,19 @@ static int msm_int_audrx_init(struct snd_soc_pcm_runtime *rtd)
 			__func__, ret);
 		return ret;
 	}
+
+#ifdef CONFIG_SND_SOC_AW87XXX
+	ret = aw87xxx_add_codec_controls(component);
+	if (ret < 0) {
+		pr_err("%s: aw87xxx_add_codec_controls failed, err %d\n",
+			__func__, ret);
+		return ret;
+	};
+#endif
+
+#if defined(CONFIG_SND_SOC_FS1599)
+	fsm_add_codec_controls(component);
+#endif
 
 	msm_add_tdm_snd_controls(component);
 	msm_add_mi2s_snd_controls(component);
@@ -4508,13 +4566,15 @@ static void *def_wcd_mbhc_cal(void)
 		(sizeof(btn_cfg->_v_btn_low[0]) * btn_cfg->num_btn);
 
 	btn_high[0] = 75;
-#if defined(CONFIG_MACH_XIAOMI_LIME) || defined(CONFIG_MACH_POCO_CITRUS)
+/*import xiaomi headset patch begin */
+#if defined(CONFIG_XIAOMI_AUDIO_MBHC)
 	btn_high[1] = 225;
 	btn_high[2] = 450;
 #else
 	btn_high[1] = 150;
 	btn_high[2] = 237;
 #endif
+/*import xiaomi headset patch end */
 	btn_high[3] = 500;
 	btn_high[4] = 500;
 	btn_high[5] = 500;
@@ -5181,6 +5241,25 @@ static struct snd_soc_dai_link msm_common_misc_fe_dai_links[] = {
 		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
 		.ops = &msm_cdc_dma_be_ops,
 	},
+#ifdef CONFIG_AUDIO_ELLIPTIC_ULTRASOUND
+	{/* hw:x,39 */
+		.name = "CDC_DMA_2 Hostless",
+		.stream_name = "CDC_DMA_2 Hostless",
+		.cpu_dai_name = "CDC_DMA_2_HOSTLESS",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_playback = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		 /* this dailink has playback support */
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+#endif /* CONFIG_AUDIO_ELLIPTIC_ULTRASOUND */
 };
 
 static struct snd_soc_dai_link msm_common_be_dai_links[] = {
@@ -6989,6 +7068,11 @@ static int msm_asoc_machine_probe(struct platform_device *pdev)
 	memcpy(&adsp_var_idx, buf, len);
 	kfree(buf);
 	pdata->va_disable = adsp_var_idx;
+#ifdef CONFIG_SND_SOC_AW87XXX
+	card->aw87xxx_spk_mode = 0;
+	card->aw87xxx_rcv_mode = 0;
+	pcard = card;
+#endif /* CONFIG_SND_SOC_AW87XXX */
 
 ret:
 	return 0;

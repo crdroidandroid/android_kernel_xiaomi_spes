@@ -76,9 +76,8 @@ void hdd_ipa_set_tx_flow_info(void)
 			sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
 			if (eConnectionState_Associated ==
 			    sta_ctx->conn_info.conn_state) {
-				staChannel = wlan_reg_freq_to_chan(
-						hdd_ctx->pdev,
-						sta_ctx->conn_info.chan_freq);
+				staChannel =
+					sta_ctx->conn_info.channel;
 				qdf_copy_macaddr(&staBssid,
 						 &sta_ctx->conn_info.bssid);
 #ifdef QCA_LL_LEGACY_TX_FLOW_CONTROL
@@ -90,9 +89,8 @@ void hdd_ipa_set_tx_flow_info(void)
 			sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
 			if (eConnectionState_Associated ==
 			    sta_ctx->conn_info.conn_state) {
-				p2pChannel = wlan_reg_freq_to_chan(
-					hdd_ctx->pdev,
-					sta_ctx->conn_info.chan_freq);
+				p2pChannel =
+					sta_ctx->conn_info.channel;
 				qdf_copy_macaddr(&p2pBssid,
 						&sta_ctx->conn_info.bssid);
 				p2pMode = "CLI";
@@ -107,9 +105,7 @@ void hdd_ipa_set_tx_flow_info(void)
 			if (hostapd_state->bss_state == BSS_START
 			    && hostapd_state->qdf_status ==
 			    QDF_STATUS_SUCCESS) {
-				p2pChannel = wlan_reg_freq_to_chan(
-					hdd_ctx->pdev,
-					hdd_ap_ctx->operating_chan_freq);
+				p2pChannel = hdd_ap_ctx->operating_channel;
 				qdf_copy_macaddr(&p2pBssid,
 						 &adapter->mac_addr);
 #ifdef QCA_LL_LEGACY_TX_FLOW_CONTROL
@@ -124,9 +120,7 @@ void hdd_ipa_set_tx_flow_info(void)
 			if (hostapd_state->bss_state == BSS_START
 			    && hostapd_state->qdf_status ==
 			    QDF_STATUS_SUCCESS) {
-				apChannel = wlan_reg_freq_to_chan(
-					hdd_ctx->pdev,
-					hdd_ap_ctx->operating_chan_freq);
+				apChannel = hdd_ap_ctx->operating_channel;
 				qdf_copy_macaddr(&apBssid,
 						&adapter->mac_addr);
 #ifdef QCA_LL_LEGACY_TX_FLOW_CONTROL
@@ -217,7 +211,7 @@ void hdd_ipa_set_tx_flow_info(void)
 					preAdapterContext->
 					tx_flow_hi_watermark_offset = 0;
 					cdp_fc_ll_set_tx_pause_q_depth(soc,
-						preAdapterContext->vdev_id,
+						preAdapterContext->session_id,
 						hdd_ctx->config->
 						tx_hbw_flow_max_queue_depth);
 					hdd_info("SCC: MODE %s(%d), CH %d, LWM %d, HWM %d, TXQDEP %d",
@@ -266,7 +260,7 @@ void hdd_ipa_set_tx_flow_info(void)
 						hdd_ctx->config->
 						tx_hbw_flow_hi_watermark_offset;
 					cdp_fc_ll_set_tx_pause_q_depth(soc,
-						adapter5->vdev_id,
+						adapter5->session_id,
 						hdd_ctx->config->
 						tx_hbw_flow_max_queue_depth);
 					hdd_info("MCC: MODE %s(%d), CH %d, LWM %d, HWM %d, TXQDEP %d",
@@ -294,7 +288,7 @@ void hdd_ipa_set_tx_flow_info(void)
 						hdd_ctx->config->
 						tx_lbw_flow_hi_watermark_offset;
 					cdp_fc_ll_set_tx_pause_q_depth(soc,
-						adapter2_4->vdev_id,
+						adapter2_4->session_id,
 						hdd_ctx->config->
 						tx_lbw_flow_max_queue_depth);
 					hdd_info("MCC: MODE %s(%d), CH %d, LWM %d, HWM %d, TXQDEP %d",
@@ -355,28 +349,6 @@ static void hdd_ipa_set_wake_up_idle(bool wake_up_idle)
 }
 #endif
 
-/**
- * hdd_ipa_send_to_nw_stack() - Check if IPA supports NAPI
- * polling during RX
- * @skb : data buffer sent to network stack
- *
- * If IPA LAN RX supports NAPI polling mechanism use
- * netif_receive_skb instead of netif_rx_ni to forward the skb
- * to network stack.
- *
- * Return: Return value from netif_rx_ni/netif_receive_skb
- */
-static int hdd_ipa_send_to_nw_stack(qdf_nbuf_t skb)
-{
-	int result;
-
-	if (qdf_ipa_get_lan_rx_napi())
-		result = netif_receive_skb(skb);
-	else
-		result = netif_rx_ni(skb);
-	return result;
-}
-
 #ifdef QCA_CONFIG_SMP
 
 /**
@@ -389,16 +361,12 @@ static int hdd_ipa_send_to_nw_stack(qdf_nbuf_t skb)
  * In this manner, UDP/TCP packets are sent in an aggregated way to the stack.
  * For IP/ICMP packets, simply call netif_rx_ni.
  *
- * Check if IPA supports NAPI polling then use netif_receive_skb
- * instead of netif_rx_ni.
- *
  * Return: return value from the netif_rx_ni/netif_rx api.
  */
 static int hdd_ipa_aggregated_rx_ind(qdf_nbuf_t skb)
 {
 	int ret;
-
-	ret =  hdd_ipa_send_to_nw_stack(skb);
+	ret =  netif_rx_ni(skb);
 	return ret;
 }
 #else
@@ -412,13 +380,13 @@ static int hdd_ipa_aggregated_rx_ind(qdf_nbuf_t skb)
 	ip_h = (struct iphdr *)(skb->data);
 	if ((skb->protocol == htons(ETH_P_IP)) &&
 		(ip_h->protocol == IPPROTO_ICMP)) {
-		result = hdd_ipa_send_to_nw_stack(skb);
+		result = netif_rx_ni(skb);
 	} else {
 		/* Call netif_rx_ni for every IPA_WLAN_RX_SOFTIRQ_THRESH packets
 		 * to avoid excessive softirq's.
 		 */
 		if (atomic_dec_and_test(&softirq_mitigation_cntr)) {
-			result = hdd_ipa_send_to_nw_stack(skb);
+			result = netif_rx_ni(skb);
 			atomic_set(&softirq_mitigation_cntr,
 					IPA_WLAN_RX_SOFTIRQ_THRESH);
 		} else {

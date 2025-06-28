@@ -837,15 +837,6 @@ config SPECULATIVE_PAGE_FAULT
 	 allocating, it is failing its processing and a classic page fault
 	 is then tried.
 
-config HAVE_USERSPACE_LOW_MEMORY_KILLER
-	bool "Have userspace low memory killer"
-	default n
-	help
-	  The page allocator cannot directly call into a
-	  userspace low memory killer as it can call into the OOM killer.
-	  Therefore, add a timeout mechanism to give the userspace
-	  low memory killer a chance to run.
-
 config GUP_BENCHMARK
 	bool "Enable infrastructure for get_user_pages_fast() benchmarking"
 	default n
@@ -883,5 +874,14 @@ config FORCE_ALLOC_FROM_DMA_ZONE
 	  Ensure certain memory allocators always return memory from ZONE_DMA32.
 	  This option helps ensure that clients who require ZONE_DMA32 memory are
 	  always using ZONE_DMA32 memory.
+
+	  If unsure, say "n".
+
+config OPLUS_MM_HACKS
+	bool "Enable oplus memory management hacks"
+	default n
+	help
+	  Improves memory management drastically as these hacks are used in Oplus devices.
+	  Tested on devices made by OEMs like Motorola and Samsung.
 
 	  If unsure, say "n".

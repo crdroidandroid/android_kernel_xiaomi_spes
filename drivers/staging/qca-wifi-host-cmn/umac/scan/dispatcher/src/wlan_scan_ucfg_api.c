@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -71,9 +72,9 @@ QDF_STATUS ucfg_scan_flush_results(struct wlan_objmgr_pdev *pdev,
 }
 
 void ucfg_scan_filter_valid_channel(struct wlan_objmgr_pdev *pdev,
-	uint32_t *chan_freq_list, uint32_t num_chan)
+	uint8_t *chan_list, uint32_t num_chan)
 {
-	scm_filter_valid_channel(pdev, chan_freq_list, num_chan);
+	scm_filter_valid_channel(pdev, chan_list, num_chan);
 }
 
 QDF_STATUS ucfg_scan_init(void)
@@ -624,8 +625,8 @@ ucfg_scan_config_hidden_ssid_for_bssid(struct wlan_objmgr_pdev *pdev,
 	if (!scan_obj)
 		return QDF_STATUS_E_FAILURE;
 
-	scm_debug("Configure bsssid:"QDF_MAC_ADDR_FMT" ssid:%.*s",
-		  QDF_MAC_ADDR_REF(bssid), ssid->length, ssid->ssid);
+	scm_debug("Configure bsssid:%pM ssid:%.*s",
+		  bssid, ssid->length, ssid->ssid);
 	qdf_mem_copy(scan_obj->pdev_info[pdev_id].conf_bssid,
 		     bssid, QDF_MAC_ADDR_SIZE);
 	scan_obj->pdev_info[pdev_id].conf_ssid.length = ssid->length;
@@ -955,8 +956,6 @@ wlan_scan_global_init(struct wlan_objmgr_psoc *psoc,
 	scan_obj->scan_disabled = 0;
 	scan_obj->drop_bcn_on_chan_mismatch =
 			 cfg_get(psoc, CFG_DROP_BCN_ON_CHANNEL_MISMATCH);
-	scan_obj->drop_bcn_on_invalid_freq =
-			 cfg_get(psoc, CFG_DROP_BCN_ON_INVALID_FREQ);
 	scan_obj->disable_timeout = false;
 	scan_obj->scan_def.active_dwell =
 			 cfg_get(psoc, CFG_ACTIVE_MAX_CHANNEL_TIME);
@@ -971,10 +970,6 @@ wlan_scan_global_init(struct wlan_objmgr_psoc *psoc,
 				cfg_get(psoc, CFG_ENABLE_WAKE_LOCK_IN_SCAN);
 	scan_obj->scan_def.active_dwell_2g =
 			 cfg_get(psoc, CFG_ACTIVE_MAX_2G_CHANNEL_TIME);
-	scan_obj->scan_def.active_dwell_6g =
-			 cfg_get(psoc, CFG_ACTIVE_MAX_6G_CHANNEL_TIME);
-	scan_obj->scan_def.passive_dwell_6g =
-			 cfg_get(psoc, CFG_PASSIVE_MAX_6G_CHANNEL_TIME);
 	scan_obj->scan_def.passive_dwell =
 			 cfg_get(psoc, CFG_PASSIVE_MAX_CHANNEL_TIME);
 	scan_obj->scan_def.max_rest_time = SCAN_MAX_REST_TIME;
@@ -1044,7 +1039,6 @@ wlan_scan_global_init(struct wlan_objmgr_psoc *psoc,
 	scan_obj->scan_def.scan_ev_restarted = true;
 	scan_obj->scan_def.enable_connected_scan =
 		cfg_get(psoc, CFG_ENABLE_CONNECTED_SCAN);
-	scan_obj->scan_def.scan_mode_6g = cfg_get(psoc, CFG_6GHZ_SCAN_MODE);
 	/* init scan id seed */
 	qdf_atomic_init(&scan_obj->scan_ids);
 
@@ -1166,8 +1160,6 @@ ucfg_scan_init_default_params(struct wlan_objmgr_vdev *vdev,
 	req->scan_req.scan_priority = def->scan_priority;
 	req->scan_req.dwell_time_active = def->active_dwell;
 	req->scan_req.dwell_time_active_2g = def->active_dwell_2g;
-	req->scan_req.dwell_time_active_6g = def->active_dwell_6g;
-	req->scan_req.dwell_time_passive_6g = def->passive_dwell_6g;
 	req->scan_req.dwell_time_passive = def->passive_dwell;
 	req->scan_req.min_rest_time = def->min_rest_time;
 	req->scan_req.max_rest_time = def->max_rest_time;
@@ -1278,8 +1270,8 @@ ucfg_scan_init_bssid_params(struct scan_start_request *req,
  */
 static bool
 is_chan_enabled_for_scan(struct regulatory_channel *reg_chan,
-		qdf_freq_t low_2g, qdf_freq_t high_2g, qdf_freq_t low_5g,
-		qdf_freq_t high_5g)
+		uint32_t low_2g, uint32_t high_2g, uint32_t low_5g,
+		uint32_t high_5g)
 {
 	if (reg_chan->state == CHANNEL_STATE_DISABLE)
 		return false;
@@ -1307,7 +1299,7 @@ ucfg_scan_init_chanlist_params(struct scan_start_request *req,
 	uint32_t idx;
 	QDF_STATUS status;
 	struct regulatory_channel *reg_chan_list = NULL;
-	qdf_freq_t low_2g, high_2g, low_5g, high_5g;
+	uint32_t low_2g, high_2g, low_5g, high_5g;
 	struct wlan_objmgr_pdev *pdev = NULL;
 	uint32_t *scan_freqs = NULL;
 	uint32_t max_chans = sizeof(req->scan_req.chan_list.chan) /
@@ -1634,7 +1626,6 @@ ucfg_scan_psoc_open(struct wlan_objmgr_psoc *psoc)
 	qdf_spinlock_create(&scan_obj->lock);
 	ucfg_scan_register_pmo_handler();
 	scm_db_init(psoc);
-	scm_channel_list_db_init(psoc);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1658,7 +1649,6 @@ ucfg_scan_psoc_close(struct wlan_objmgr_psoc *psoc)
 	ucfg_scan_unregister_pmo_handler();
 	qdf_spinlock_destroy(&scan_obj->lock);
 	wlan_scan_global_deinit(psoc);
-	scm_channel_list_db_deinit(psoc);
 
 	return QDF_STATUS_SUCCESS;
 }

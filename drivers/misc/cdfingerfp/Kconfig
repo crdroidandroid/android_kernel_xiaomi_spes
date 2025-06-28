@@ -1,5 +1,0 @@
-config CDFINGER_FINGERPRINT
-	tristate "generic cdfinger fingerprint driver"
-	default y
-	help
-	add support for cdfinger fingerprint driver.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 /*
@@ -283,7 +283,7 @@ static void drawobj_destroy_sparse(struct kgsl_drawobj *drawobj)
 	}
 }
 
-static void drawobj_sync_timeline_fence_work(struct irq_work *work)
+static void drawobj_sync_timeline_fence_work(struct work_struct *work)
 {
 	struct kgsl_drawobj_sync_event *event = container_of(work,
 		struct kgsl_drawobj_sync_event, work);
@@ -303,7 +303,7 @@ static void drawobj_sync_timeline_fence_callback(struct dma_fence *f,
 	 * removing the fence
 	 */
 	if (drawobj_sync_expire(event->device, event))
-		irq_work_queue(&event->work);
+		queue_work(kgsl_driver.mem_workqueue, &event->work);
 }
 
 static void syncobj_destroy(struct kgsl_drawobj *drawobj)
@@ -497,7 +497,7 @@ static int drawobj_add_sync_timeline(struct kgsl_device *device,
 	event->device = device;
 	event->context = NULL;
 	event->fence = fence;
-	init_irq_work(&event->work, drawobj_sync_timeline_fence_work);
+	INIT_WORK(&event->work, drawobj_sync_timeline_fence_work);
 
 	INIT_LIST_HEAD(&event->cb.node);
 
@@ -508,6 +508,8 @@ static int drawobj_add_sync_timeline(struct kgsl_device *device,
 	/* Set pending flag before adding callback to avoid race */
 	set_bit(event->id, &syncobj->pending);
 
+	/* Get a dma_fence refcount to hand over to the callback */
+	dma_fence_get(event->fence);
 	ret = dma_fence_add_callback(event->fence,
 		&event->cb, drawobj_sync_timeline_fence_callback);
 
@@ -520,10 +522,15 @@ static int drawobj_add_sync_timeline(struct kgsl_device *device,
 			ret = 0;
 		}
 
+		/* Put the refcount from fence creation */
+		dma_fence_put(event->fence);
 		kgsl_drawobj_put(drawobj);
+		return ret;
 	}
 
-	return ret;
+	/* Put the refcount from fence creation */
+	dma_fence_put(event->fence);
+	return 0;
 }
 
 static int drawobj_add_sync_fence(struct kgsl_device *device,
@@ -687,47 +694,6 @@ int kgsl_drawobj_sync_add_sync(struct kgsl_device *device,
 	struct kgsl_drawobj_sync *syncobj,
 	struct kgsl_cmd_syncpoint *sync)
 {
-	union {
-		struct kgsl_cmd_syncpoint_timestamp sync_timestamp;
-		struct kgsl_cmd_syncpoint_fence sync_fence;
-	} data;
-	void *priv;
-	int psize;
-	struct kgsl_drawobj *drawobj = DRAWOBJ(syncobj);
-	int (*func)(struct kgsl_device *device,
-			struct kgsl_drawobj_sync *syncobj,
-			void *priv);
-
-	switch (sync->type) {
-	case KGSL_CMD_SYNCPOINT_TYPE_TIMESTAMP:
-		psize = sizeof(struct kgsl_cmd_syncpoint_timestamp);
-		func = drawobj_add_sync_timestamp;
-		priv = &data.sync_timestamp;
-		break;
-	case KGSL_CMD_SYNCPOINT_TYPE_FENCE:
-		psize = sizeof(struct kgsl_cmd_syncpoint_fence);
-		func = drawobj_add_sync_fence;
-		priv = &data.sync_fence;
-		break;
-	default:
-		dev_err(device->dev,
-			     "bad syncpoint type ctxt %d type 0x%x size %zu\n",
-			     drawobj->context->id, sync->type, sync->size);
-		return -EINVAL;
-	}
-
-	if (sync->size != psize) {
-		dev_err(device->dev,
-			     "bad syncpoint size ctxt %d type 0x%x size %zu\n",
-			     drawobj->context->id, sync->type, sync->size);
-		return -EINVAL;
-	}
-
-	if (copy_from_user(priv, sync->priv, sync->size))
-		return -EFAULT;
-
-	return func(device, syncobj, priv);
-=======
 	struct kgsl_drawobj *drawobj = DRAWOBJ(syncobj);
 
 	if (sync->type == KGSL_CMD_SYNCPOINT_TYPE_TIMESTAMP)
@@ -744,7 +710,6 @@ int kgsl_drawobj_sync_add_sync(struct kgsl_device *device,
 		sync->type, drawobj->context->id);
 
 	return -EINVAL;
->>>>>>> 95be18797bfcfae5988703e848fa17aa5942ec8e
 }
 
 static void add_profiling_buffer(struct kgsl_device *device,

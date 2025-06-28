@@ -2,7 +2,6 @@
 // rc-main.c - Remote Controller core module
 //
 // Copyright (C) 2009-2010 by Mauro Carvalho Chehab
-// Copyright (C) 2020 XiaoMi, Inc.
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -947,7 +946,6 @@ int rc_open(struct rc_dev *rdev)
 
 	return rval;
 }
-EXPORT_SYMBOL_GPL(rc_open);
 
 static int ir_open(struct input_dev *idev)
 {
@@ -967,7 +965,6 @@ void rc_close(struct rc_dev *rdev)
 		mutex_unlock(&rdev->lock);
 	}
 }
-EXPORT_SYMBOL_GPL(rc_close);
 
 static void ir_close(struct input_dev *idev)
 {
@@ -1878,6 +1875,8 @@ int rc_register_device(struct rc_dev *dev)
 			goto out_raw;
 	}
 
+	dev->registered = true;
+
 	rc = device_add(&dev->dev);
 	if (rc)
 		goto out_rx_free;
@@ -1886,8 +1885,6 @@ int rc_register_device(struct rc_dev *dev)
 	dev_info(&dev->dev, "%s as %s\n",
 		 dev->device_name ?: "Unspecified device", path ?: "N/A");
 	kfree(path);
-
-	dev->registered = true;
 
 	/*
 	 * once the the input device is registered in rc_setup_rx_device,

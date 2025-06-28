@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
@@ -16,6 +17,8 @@
 #include "dsi_display.h"
 #include "sde_crtc.h"
 #include "sde_rm.h"
+
+static int lcd_esd_irq = 0;
 
 #define BL_NODE_NAME_SIZE 32
 #define HDR10_PLUS_VSIF_TYPE_CODE      0x81
@@ -148,7 +151,7 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	display = (struct dsi_display *) c_conn->display;
 	bl_config = &display->panel->bl_config;
 	props.max_brightness = bl_config->brightness_max_level;
-	props.brightness = 1023;
+	props.brightness = bl_config->brightness_max_level;
 	snprintf(bl_node_name, BL_NODE_NAME_SIZE, "panel%u-backlight",
 							display_count);
 	c_conn->bl_device = backlight_device_register(bl_node_name, dev->dev,
@@ -1378,10 +1381,12 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 	/* connector-specific property handling */
 	idx = msm_property_index(&c_conn->property_info, property);
 	switch (idx) {
+	/*add for thermal begin*/
 	case CONNECTOR_PROP_LP:
-                if(connector->dev)
-                        connector->dev->doze_state = val;
-                break;
+		if (connector->dev)
+			connector->dev->doze_state = val;
+		break;
+	/*add for thermal end*/
 	case CONNECTOR_PROP_OUT_FB:
 		/* clear old fb, if present */
 		if (c_state->out_fb)
@@ -2148,6 +2153,56 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 	return 0;
 }
 
+void lcd_esd_enable(bool on)
+{
+  if(on)
+    lcd_esd_irq = 0;
+  else
+    lcd_esd_irq = 1;
+}
+EXPORT_SYMBOL(lcd_esd_enable);
+
+static void esd_recovery(int irq, void *data)
+{
+	struct sde_connector *c_conn = data;
+	struct drm_event event;
+	bool panel_on = true;
+	struct dsi_display *dsi_display;
+
+	if (!c_conn && !c_conn->display) {
+		SDE_ERROR("esd not able to get connector object\n");
+		return;
+	}
+
+	dsi_display = (struct dsi_display *)(c_conn->display);
+
+	if (dsi_display && dsi_display->panel)
+		panel_on = dsi_display->panel->panel_initialized;
+
+	if (panel_on) {
+		lcd_esd_enable(0);
+		c_conn->panel_dead = true;
+		event.type = DRM_EVENT_PANEL_DEAD;
+		event.length = sizeof(bool);
+		msm_mode_object_event_notify(&c_conn->base.base,
+									 c_conn->base.dev, &event, (u8 *)&c_conn->panel_dead);
+		sde_encoder_display_failure_notification(c_conn->encoder, false);
+	}
+
+	SDE_DEBUG("esd check irq report panel_status = %d panel_name = %s\n",
+			panel_on, dsi_display->panel->name);
+}
+
+static irqreturn_t esd_err_irq_handle(int irq, void *data)
+{
+	pr_debug("esd check irq report lcd_esd_irq = %d\n", lcd_esd_irq);
+	if (lcd_esd_irq)
+	return IRQ_HANDLED;
+
+	esd_recovery(irq, data);
+	return IRQ_HANDLED;
+}
+
 static void _sde_connector_report_panel_dead(struct sde_connector *conn,
 	bool skip_pre_kickoff)
 {
@@ -2371,7 +2426,7 @@ int sde_connector_set_blob_data(struct drm_connector *conn,
 		return -EINVAL;
 	}
 
-	info = kzalloc(sizeof(*info), GFP_KERNEL);
+	info = vzalloc(sizeof(*info));
 	if (!info)
 		return -ENOMEM;
 
@@ -2429,7 +2484,7 @@ int sde_connector_set_blob_data(struct drm_connector *conn,
 			SDE_KMS_INFO_DATALEN(info),
 			prop_id);
 exit:
-	kfree(info);
+	vfree(info);
 
 	return rc;
 }
@@ -2474,6 +2529,22 @@ static int _sde_connector_install_properties(struct drm_device *dev,
 				sizeof(dsi_display->panel->hdr_props),
 				CONNECTOR_PROP_HDR_INFO);
 		}
+
+			/* register esd irq and enable it after panel enabled */
+		if (dsi_display && dsi_display->panel &&
+			dsi_display->panel->esd_config.esd_err_irq_gpio > 0) {
+			rc = request_threaded_irq(dsi_display->panel->esd_config.esd_err_irq,
+									  NULL, esd_err_irq_handle,
+									  dsi_display->panel->esd_config.esd_err_irq_flags,
+									  "esd_err_irq", c_conn);
+			if (rc < 0) {
+				pr_debug("%s: request esd irq %d failed\n",
+						__func__, dsi_display->panel->esd_config.esd_err_irq);
+				dsi_display->panel->esd_config.esd_err_irq = 0;
+			} else
+				pr_debug("%s: Request esd irq succeed!\n", __func__);
+		}
+
 	}
 
 	msm_property_install_volatile_range(

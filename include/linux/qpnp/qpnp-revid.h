@@ -366,8 +366,6 @@ struct pmic_revid_data {
 	int		tp_rev;
 };
 
-#define PMIC_STRING_MAXLENGTH          80
-extern char hq_pmic_string[PMIC_STRING_MAXLENGTH];
 #ifdef CONFIG_QPNP_REVID
 struct pmic_revid_data *get_revid_data(struct device_node *dev_node);
 #else

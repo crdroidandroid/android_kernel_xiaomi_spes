@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -363,8 +364,7 @@ timer_failed:
 		wlan_serialization_cmd_cancel_handler(
 				ser_pdev_obj, &cmd_list->cmd,
 				NULL, NULL, cmd_list->cmd.cmd_type,
-				WLAN_SERIALIZATION_ACTIVE_QUEUE,
-				WLAN_SER_CMD_ATTR_NONE);
+				WLAN_SERIALIZATION_ACTIVE_QUEUE);
 error:
 	return status;
 }
@@ -543,7 +543,6 @@ QDF_STATUS wlan_serialization_generic_timer_cb(void *arg)
 	struct wlan_serialization_timer *timer = arg;
 	struct wlan_serialization_command *cmd = timer->cmd;
 	struct wlan_objmgr_vdev *vdev = NULL;
-	enum wlan_serialization_cmd_status status;
 
 
 	if (!cmd) {
@@ -567,11 +566,10 @@ QDF_STATUS wlan_serialization_generic_timer_cb(void *arg)
 	 * dequeue cmd API will cleanup and destroy the timer. If it fails to
 	 * dequeue command then we have to destroy the timer.
 	 */
-	status = wlan_serialization_dequeue_cmd(cmd, SER_TIMEOUT, true);
+	wlan_serialization_dequeue_cmd(cmd, SER_TIMEOUT, true);
 
 	/* Release the ref taken before the timer was started */
-	if (status == WLAN_SER_CMD_IN_ACTIVE_LIST)
-		wlan_objmgr_vdev_release_ref(vdev, WLAN_SERIALIZATION_ID);
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_SERIALIZATION_ID);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -817,8 +815,7 @@ wlan_serialization_cmd_cancel_handler(
 		struct wlan_ser_pdev_obj *ser_obj,
 		struct wlan_serialization_command *cmd,
 		struct wlan_objmgr_pdev *pdev, struct wlan_objmgr_vdev *vdev,
-		enum wlan_serialization_cmd_type cmd_type, uint8_t queue_type,
-		enum wlan_ser_cmd_attr cmd_attr)
+		enum wlan_serialization_cmd_type cmd_type, uint8_t queue_type)
 {
 	enum wlan_serialization_cmd_status active_status =
 		WLAN_SER_CMD_NOT_FOUND;
@@ -840,7 +837,7 @@ wlan_serialization_cmd_cancel_handler(
 		else
 			active_status = wlan_ser_cancel_non_scan_cmd(
 					ser_obj, pdev, vdev, cmd,
-					cmd_type, true, cmd_attr);
+					cmd_type, true);
 	}
 
 	if (queue_type & WLAN_SERIALIZATION_PENDING_QUEUE) {
@@ -851,7 +848,7 @@ wlan_serialization_cmd_cancel_handler(
 		else
 			pending_status = wlan_ser_cancel_non_scan_cmd(
 					ser_obj, pdev, vdev, cmd,
-					cmd_type, false, cmd_attr);
+					cmd_type, false);
 	}
 
 	if (active_status == WLAN_SER_CMD_IN_ACTIVE_LIST &&
@@ -897,44 +894,38 @@ wlan_serialization_find_and_cancel_cmd(
 		/* remove scan cmd which matches the given cmd struct */
 		status = wlan_serialization_cmd_cancel_handler(
 				ser_obj, cmd, NULL, NULL,
-				WLAN_SER_CMD_SCAN, queue_type,
-				WLAN_SER_CMD_ATTR_NONE);
+				WLAN_SER_CMD_SCAN, queue_type);
 		break;
 	case WLAN_SER_CANCEL_PDEV_SCANS:
 		/* remove all scan cmds which matches the pdev object */
 		status = wlan_serialization_cmd_cancel_handler(
 				ser_obj, NULL, pdev, NULL,
-				WLAN_SER_CMD_SCAN, queue_type,
-				WLAN_SER_CMD_ATTR_NONE);
+				WLAN_SER_CMD_SCAN, queue_type);
 		break;
 	case WLAN_SER_CANCEL_VDEV_SCANS:
 	case WLAN_SER_CANCEL_VDEV_HOST_SCANS:
 		/* remove all scan cmds which matches the vdev object */
 		status = wlan_serialization_cmd_cancel_handler(
 				ser_obj, NULL, NULL, cmd->vdev,
-				WLAN_SER_CMD_SCAN, queue_type,
-				WLAN_SER_CMD_ATTR_NONE);
+				WLAN_SER_CMD_SCAN, queue_type);
 		break;
 	case WLAN_SER_CANCEL_NON_SCAN_CMD:
 		/* remove nonscan cmd which matches the given cmd */
 		status = wlan_serialization_cmd_cancel_handler(
 				ser_obj, cmd, NULL, NULL,
-				WLAN_SER_CMD_NONSCAN, queue_type,
-				WLAN_SER_CMD_ATTR_NONE);
+				WLAN_SER_CMD_NONSCAN, queue_type);
 		break;
 	case WLAN_SER_CANCEL_PDEV_NON_SCAN_CMD:
 		/* remove all non scan cmds which matches the pdev object */
 		status = wlan_serialization_cmd_cancel_handler(
 				ser_obj, NULL, pdev, NULL,
-				WLAN_SER_CMD_NONSCAN, queue_type,
-				WLAN_SER_CMD_ATTR_NONE);
+				WLAN_SER_CMD_NONSCAN, queue_type);
 		break;
 	case WLAN_SER_CANCEL_VDEV_NON_SCAN_CMD:
 		/* remove all non scan cmds which matches the vdev object */
 		status = wlan_serialization_cmd_cancel_handler(
 				ser_obj, NULL, NULL, cmd->vdev,
-				WLAN_SER_CMD_NONSCAN, queue_type,
-				WLAN_SER_CMD_ATTR_NONE);
+				WLAN_SER_CMD_NONSCAN, queue_type);
 		break;
 	case WLAN_SER_CANCEL_VDEV_NON_SCAN_CMD_TYPE:
 		/*
@@ -943,18 +934,7 @@ wlan_serialization_find_and_cancel_cmd(
 		 */
 		status = wlan_serialization_cmd_cancel_handler(
 				ser_obj, NULL, NULL, cmd->vdev,
-				cmd->cmd_type, queue_type,
-				WLAN_SER_CMD_ATTR_NONE);
-		break;
-	case WLAN_SER_CANCEL_VDEV_NON_SCAN_NB_CMD:
-		/*
-		 * remove all non-blocking non-scan cmds which matches the given
-		 * vdev
-		 */
-		status = wlan_serialization_cmd_cancel_handler(
-				ser_obj, NULL, NULL, cmd->vdev,
-				WLAN_SER_CMD_NONSCAN, queue_type,
-				WLAN_SER_CMD_ATTR_NONBLOCK);
+				cmd->cmd_type, queue_type);
 		break;
 	default:
 		ser_err("Invalid request");

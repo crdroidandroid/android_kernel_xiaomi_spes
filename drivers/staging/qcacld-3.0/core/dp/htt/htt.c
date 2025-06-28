@@ -38,7 +38,6 @@
 #include <cds_api.h>
 #include "hif.h"
 #include <cdp_txrx_handle.h>
-#include <ol_txrx_peer_find.h>
 
 #define HTT_HTC_PKT_POOL_INIT_SIZE 100  /* enough for a large A-MPDU */
 
@@ -114,28 +113,32 @@ void htt_htc_pkt_pool_free(struct htt_pdev_t *pdev)
 
 #ifdef ATH_11AC_TXCOMPACT
 
-void htt_htc_misc_pkt_list_trim(struct htt_pdev_t *pdev)
+void
+htt_htc_misc_pkt_list_trim(struct htt_pdev_t *pdev, int level)
 {
-	struct htt_htc_pkt_union *pkt, *next;
+	struct htt_htc_pkt_union *pkt, *next, *prev = NULL;
+	int i = 0;
 	qdf_nbuf_t netbuf;
 
-	/* skip if first come */
-	if(!pdev->last_misc_pkt->u.next)
-		goto out;
-
-	pkt = pdev->last_misc_pkt->u.next;
-	pdev->last_misc_pkt->u.next = NULL;
+	HTT_TX_MUTEX_ACQUIRE(&pdev->htt_tx_mutex);
+	pkt = pdev->htt_htc_pkt_misclist;
 	while (pkt) {
 		next = pkt->u.next;
-		netbuf = (qdf_nbuf_t) (pkt->u.pkt.htc_pkt.pNetBufContext);
-		qdf_nbuf_unmap(pdev->osdev, netbuf, QDF_DMA_TO_DEVICE);
-		qdf_nbuf_free(netbuf);
-		qdf_mem_free(pkt);
+		/* trim the out grown list*/
+		if (++i > level) {
+			netbuf =
+				(qdf_nbuf_t)(pkt->u.pkt.htc_pkt.pNetBufContext);
+			qdf_nbuf_unmap(pdev->osdev, netbuf, QDF_DMA_TO_DEVICE);
+			qdf_nbuf_free(netbuf);
+			qdf_mem_free(pkt);
+			pkt = NULL;
+			if (prev)
+				prev->u.next = NULL;
+		}
+		prev = pkt;
 		pkt = next;
 	}
-out:
-	pdev->last_misc_pkt = pdev->htt_htc_pkt_misclist;
-	pdev->last_misc_num = 1;
+	HTT_TX_MUTEX_RELEASE(&pdev->htt_tx_mutex);
 }
 
 void htt_htc_misc_pkt_list_add(struct htt_pdev_t *pdev, struct htt_htc_pkt *pkt)
@@ -149,16 +152,15 @@ void htt_htc_misc_pkt_list_add(struct htt_pdev_t *pdev, struct htt_htc_pkt *pkt)
 	if (pdev->htt_htc_pkt_misclist) {
 		u_pkt->u.next = pdev->htt_htc_pkt_misclist;
 		pdev->htt_htc_pkt_misclist = u_pkt;
-		pdev->last_misc_num++;
 	} else {
 		pdev->htt_htc_pkt_misclist = u_pkt;
-		pdev->last_misc_pkt = u_pkt;
-		pdev->last_misc_num = 1;
 	}
-
-	if (pdev->last_misc_num > misclist_trim_level)
-		htt_htc_misc_pkt_list_trim(pdev);
 	HTT_TX_MUTEX_RELEASE(&pdev->htt_tx_mutex);
+
+	/* only ce pipe size + tx_queue_depth could possibly be in use
+	 * free older packets in the msiclist
+	 */
+	htt_htc_misc_pkt_list_trim(pdev, misclist_trim_level);
 }
 
 void htt_htc_misc_pkt_pool_free(struct htt_pdev_t *pdev)
@@ -568,13 +570,6 @@ htt_attach(struct htt_pdev_t *pdev, int desc_pool_size)
 		ol_tx_target_credit_update(
 				pdev->txrx_pdev, ol_cfg_target_tx_credit(
 					pdev->ctrl_pdev));
-		DPTRACE(qdf_dp_trace_credit_record(QDF_HTT_ATTACH,
-			QDF_CREDIT_INC,
-			ol_cfg_target_tx_credit(pdev->ctrl_pdev),
-			qdf_atomic_read(&pdev->txrx_pdev->target_tx_credit),
-			qdf_atomic_read(&pdev->txrx_pdev->txq_grps[0].credit),
-			qdf_atomic_read(&pdev->txrx_pdev->txq_grps[1].credit)));
-
 	} else {
 		enum wlan_frm_fmt frm_type;
 
@@ -799,8 +794,6 @@ int htt_htc_attach(struct htt_pdev_t *pdev, uint16_t service_id)
 	connect.EpCallbacks.EpTxCompleteMultiple = NULL;
 	connect.EpCallbacks.EpRecv = htt_t2h_msg_handler;
 	connect.EpCallbacks.ep_resume_tx_queue = htt_tx_resume_handler;
-	connect.EpCallbacks.ep_padding_credit_update =
-					htt_tx_padding_credit_update_handler;
 
 	/* rx buffers currently are provided by HIF, not by EpRecvRefill */
 	connect.EpCallbacks.EpRecvRefill = NULL;

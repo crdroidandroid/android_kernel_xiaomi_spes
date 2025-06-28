@@ -1,5 +1,0 @@
-menuconfig LAST_KMSG
-	tristate "Last Kmsg support"
-	default y
-	help
-	  Exports last_kmsg

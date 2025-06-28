@@ -467,8 +467,7 @@ static void hif_latency_profile_measure(struct hif_exec_context *hif_ext_group)
 		hif_ext_group->sched_latency_stats[7]++;
 }
 #else
-static inline
-void hif_latency_profile_measure(struct hif_exec_context *hif_ext_group)
+static void hif_latency_profile_measure(struct hif_exec_context *hif_ext_group)
 {
 }
 #endif
@@ -485,13 +484,11 @@ static void hif_latency_profile_start(struct hif_exec_context *hif_ext_group)
 	hif_ext_group->tstamp = qdf_ktime_to_ms(qdf_ktime_get());
 }
 #else
-static inline
-void hif_latency_profile_start(struct hif_exec_context *hif_ext_group)
+static void hif_latency_profile_start(struct hif_exec_context *hif_ext_group)
 {
 }
 #endif
 
-#ifdef FEATURE_NAPI
 /**
  * hif_exec_poll() - napi poll
  * napi: napi struct
@@ -588,6 +585,7 @@ struct hif_execution_ops napi_sched_ops = {
 	.kill = &hif_exec_napi_kill,
 };
 
+#ifdef FEATURE_NAPI
 /**
  * hif_exec_napi_create() - allocate and initialize a napi exec context
  * @scale: a binary shift factor to map NAPI budget from\to internal
@@ -614,7 +612,7 @@ static struct hif_exec_context *hif_exec_napi_create(uint32_t scale)
 #else
 static struct hif_exec_context *hif_exec_napi_create(uint32_t scale)
 {
-	HIF_WARN("%s: FEATURE_NAPI not defined, making tasklet", __func__);
+	HIF_WARN("%s: FEATURE_NAPI not defined, making tasklet");
 	return hif_exec_tasklet_create();
 }
 #endif

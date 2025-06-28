@@ -50,6 +50,7 @@
 #include <linux/ipc_logging.h>
 #include <asm/irq.h>
 #include <linux/kthread.h>
+#include <uapi/linux/sched.h>
 
 #include <linux/msm-sps.h>
 #include <linux/platform_data/msm_serial_hs.h>
@@ -263,7 +264,9 @@ static const struct of_device_id msm_hs_match_table[] = {
 #define RX_FLUSH_COMPLETE_TIMEOUT 300 /* In jiffies */
 #define BLSP_UART_CLK_FMAX 63160000
 
+#ifdef CONFIG_DEBUG_FS
 static struct dentry *debug_base;
+#endif
 static struct platform_driver msm_serial_hs_platform_driver;
 static struct uart_driver msm_hs_driver;
 static const struct uart_ops msm_hs_ops;
@@ -672,6 +675,8 @@ DEFINE_DEBUGFS_ATTRIBUTE(loopback_enable_fops, msm_serial_loopback_enable_get,
  * test scripts.
  * writing 0 disables the internal loopback mode. Default is disabled.
  */
+
+#ifdef CONFIG_DEBUG_FS
 static void msm_serial_debugfs_init(struct msm_hs_port *msm_uport,
 					   int id)
 {
@@ -688,6 +693,7 @@ static void msm_serial_debugfs_init(struct msm_hs_port *msm_uport,
 		MSM_HS_ERR("%s(): Cannot create loopback.%d debug entry\n",
 							__func__, id);
 }
+#endif /* CONFIG_DEBUG_FS */
 
 static int msm_hs_remove(struct platform_device *pdev)
 {
@@ -707,7 +713,9 @@ static int msm_hs_remove(struct platform_device *pdev)
 	dev = msm_uport->uport.dev;
 	sysfs_remove_file(&pdev->dev.kobj, &dev_attr_clock.attr);
 	sysfs_remove_file(&pdev->dev.kobj, &dev_attr_debug_mask.attr);
+#ifdef CONFIG_DEBUG_FS
 	debugfs_remove(msm_uport->loopback_dir);
+#endif
 
 	dma_free_coherent(msm_uport->uport.dev,
 			UART_DMA_DESC_NR * UARTDM_RX_BUF_SIZE,
@@ -2742,6 +2750,7 @@ static int uartdm_init_port(struct uart_port *uport)
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 	struct msm_hs_tx *tx = &msm_uport->tx;
 	struct msm_hs_rx *rx = &msm_uport->rx;
+	struct sched_param param = { .sched_priority = 1 };
 
 	init_waitqueue_head(&rx->wait);
 	init_waitqueue_head(&tx->wait);
@@ -2756,6 +2765,8 @@ static int uartdm_init_port(struct uart_port *uport)
 		MSM_HS_ERR("%s(): error creating task\n", __func__);
 		goto exit_lh_init;
 	}
+	sched_setscheduler(rx->task, SCHED_FIFO, &param);
+
 	kthread_init_work(&rx->kwork, msm_serial_hs_rx_work);
 
 	kthread_init_worker(&tx->kworker);
@@ -2765,6 +2776,7 @@ static int uartdm_init_port(struct uart_port *uport)
 		MSM_HS_ERR("%s(): error creating task\n", __func__);
 		goto exit_lh_init;
 	}
+	sched_setscheduler(tx->task, SCHED_FIFO, &param);
 
 	kthread_init_work(&tx->kwork, msm_serial_hs_tx_work);
 
@@ -3284,6 +3296,7 @@ static void  msm_serial_hs_rt_init(struct uart_port *uport)
 	msm_uport->pm_state = MSM_HS_PM_SUSPENDED;
 	mutex_unlock(&msm_uport->mtx);
 	pm_runtime_enable(uport->dev);
+	tty_port_set_policy(&uport->state->port, SCHED_FIFO, 1);
 }
 
 static int msm_hs_runtime_suspend(struct device *dev)
@@ -3313,7 +3326,9 @@ static int msm_hs_probe(struct platform_device *pdev)
 	int core_irqres, bam_irqres, wakeup_irqres;
 	struct msm_serial_hs_platform_data *pdata = pdev->dev.platform_data;
 	unsigned long data;
+#ifdef CONFIG_IPC_LOGGING
 	char name[30];
+#endif
 
 	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
 	if (ret) {
@@ -3412,6 +3427,7 @@ static int msm_hs_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+#ifdef CONFIG_IPC_LOGGING
 	memset(name, 0, sizeof(name));
 	scnprintf(name, sizeof(name), "%s%s", dev_name(msm_uport->uport.dev),
 									"_state");
@@ -3429,6 +3445,7 @@ static int msm_hs_probe(struct platform_device *pdev)
 			MSM_HS_WARN("%s(): Failed create dev. attr\n",
 			 __func__);
 	}
+#endif
 
 	uport->irq = core_irqres;
 	msm_uport->bam_irq = bam_irqres;
@@ -3503,6 +3520,7 @@ static int msm_hs_probe(struct platform_device *pdev)
 	msm_uport->tx.flush = FLUSH_SHUTDOWN;
 	msm_uport->rx.flush = FLUSH_SHUTDOWN;
 
+#ifdef CONFIG_IPC_LOGGING
 	memset(name, 0, sizeof(name));
 	scnprintf(name, sizeof(name), "%s%s", dev_name(msm_uport->uport.dev),
 									"_tx");
@@ -3529,6 +3547,7 @@ static int msm_hs_probe(struct platform_device *pdev)
 	if (!msm_uport->ipc_msm_hs_pwr_ctxt)
 		dev_err(&pdev->dev, "%s(): error creating usr log context\n",
 								__func__);
+#endif
 
 	uport->irq = core_irqres;
 	msm_uport->bam_irq = bam_irqres;
@@ -3566,8 +3585,9 @@ static int msm_hs_probe(struct platform_device *pdev)
 		MSM_HS_ERR("Probe Failed as sysfs failed\n");
 		goto err_clock;
 	}
-
+#ifdef CONFIG_DEBUG_FS
 	msm_serial_debugfs_init(msm_uport, pdev->id);
+#endif
 	msm_hs_unconfig_uart_gpios(uport);
 
 	uport->line = pdev->id;
@@ -3612,14 +3632,17 @@ static int __init msm_serial_hs_init(void)
 		pr_err("%s failed to load\n", __func__);
 		return ret;
 	}
+#ifdef CONFIG_DEBUG_FS
 	debug_base = debugfs_create_dir("msm_serial_hs", NULL);
 	if (IS_ERR_OR_NULL(debug_base))
 		pr_err("msm_serial_hs: Cannot create debugfs dir\n");
-
+#endif
 	ret = platform_driver_register(&msm_serial_hs_platform_driver);
 	if (ret) {
 		pr_err("%s failed to load\n", __func__);
+#ifdef CONFIG_DEBUG_FS
 		debugfs_remove_recursive(debug_base);
+#endif
 		uart_unregister_driver(&msm_hs_driver);
 		return ret;
 	}
@@ -3740,7 +3763,9 @@ static void msm_hs_shutdown(struct uart_port *uport)
 static void __exit msm_serial_hs_exit(void)
 {
 	pr_debug("msm_serial_hs module removed\n");
+#ifdef CONFIG_DEBUG_FS
 	debugfs_remove_recursive(debug_base);
+#endif
 	platform_driver_unregister(&msm_serial_hs_platform_driver);
 	uart_unregister_driver(&msm_hs_driver);
 }

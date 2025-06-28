@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <asm/cacheflush.h>
@@ -61,6 +62,15 @@ _kgsl_get_pool_from_order(unsigned int order)
 static void
 _kgsl_pool_add_page(struct kgsl_page_pool *pool, struct page *p)
 {
+	/*
+	 * Sanity check to make sure we don't re-pool a page that
+	 * somebody else has a reference to.
+	 */
+	if (WARN_ON_ONCE(unlikely(page_count(p) > 1))) {
+		__free_pages(p, pool->pool_order);
+		return;
+	}
+
 	kgsl_zero_page(p, pool->pool_order);
 
 	spin_lock(&pool->list_lock);
@@ -522,7 +532,7 @@ static void kgsl_of_get_mempools(struct device_node *parent)
 	 * low memory configuration is not specified
 	 * then fallback to default pool configuration.
 	 */
-	if (totalram_pages < (SZ_2G >> PAGE_SHIFT))
+	if (totalram_pages() < (SZ_2G >> PAGE_SHIFT))
 		node = of_find_compatible_node(parent, NULL,
 				"qcom,gpu-mempools-lowmem");
 

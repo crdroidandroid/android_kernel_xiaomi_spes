@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <asm/dma-iommu.h>
@@ -477,7 +478,6 @@ static int ngd_check_hw_status(struct msm_slim_ctrl *dev)
 
 static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 {
-	DECLARE_COMPLETION_ONSTACK(done);
 	DECLARE_COMPLETION_ONSTACK(tx_sent);
 
 	struct msm_slim_ctrl *dev = slim_get_ctrldata(ctrl);
@@ -487,9 +487,11 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 	u8 la = txn->la;
 	u8 txn_mt;
 	u16 txn_mc = txn->mc;
-	u8 wbuf[SLIM_MSGQ_BUF_LEN];
+	u8 wbuf[SLIM_MSGQ_BUF_LEN] = {0};
 	bool report_sat = false;
 	bool sync_wr = true;
+
+	reinit_completion(&dev->xfer_done);
 
 	if (txn->mc & SLIM_MSG_CLK_PAUSE_SEQ_FLG)
 		return -EPROTONOSUPPORT;
@@ -649,7 +651,9 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 		wbuf[i++] = txn->wbuf[0];
 		if (txn->mc != SLIM_USR_MC_DISCONNECT_PORT)
 			wbuf[i++] = txn->wbuf[1];
-		ret = ngd_get_tid(ctrl, txn, &wbuf[i++], &done);
+
+		txn->comp = &dev->xfer_done;
+		ret = ngd_get_tid(ctrl, txn, &wbuf[i++], &dev->xfer_done);
 		if (ret) {
 			SLIM_ERR(dev, "TID for connect/disconnect fail:%d\n",
 					ret);
@@ -1818,7 +1822,9 @@ static int ngd_slim_probe(struct platform_device *pdev)
 	bool			rxreg_access = false;
 	bool			slim_mdm = false;
 	const char		*ext_modem_id = NULL;
+#ifdef CONFIG_IPC_LOGGING
 	char			ipc_err_log_name[30];
+#endif
 
 	if (of_device_is_compatible(pdev->dev.of_node,
 				    "qcom,iommu-slim-ctrl-cb"))
@@ -1892,6 +1898,7 @@ static int ngd_slim_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, dev);
 	slim_set_ctrldata(&dev->ctrl, dev);
 
+#ifdef CONFIG_IPC_LOGGING
 	/* Create IPC log context */
 	dev->ipc_slimbus_log = ipc_log_context_create(IPC_SLIMBUS_LOG_PAGES,
 						dev_name(dev->dev), 0);
@@ -1918,6 +1925,7 @@ static int ngd_slim_probe(struct platform_device *pdev)
 	else
 		SLIM_INFO(dev, "start error logging for slim dev %s\n",
 							ipc_err_log_name);
+#endif
 
 	ret = sysfs_create_file(&dev->dev->kobj, &dev_attr_debug_mask.attr);
 	if (ret) {
@@ -2015,6 +2023,7 @@ static int ngd_slim_probe(struct platform_device *pdev)
 	init_completion(&dev->reconf);
 	init_completion(&dev->ctrl_up);
 	init_completion(&dev->qmi_up);
+	init_completion(&dev->xfer_done);
 	mutex_init(&dev->tx_lock);
 	mutex_init(&dev->ssr_lock);
 	spin_lock_init(&dev->tx_buf_lock);

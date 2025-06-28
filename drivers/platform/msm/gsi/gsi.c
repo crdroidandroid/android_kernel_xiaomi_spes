@@ -1788,7 +1788,7 @@ int gsi_alloc_evt_ring(struct gsi_evt_ring_props *props, unsigned long dev_hdl,
 EXPORT_SYMBOL(gsi_alloc_evt_ring);
 
 static void __gsi_write_evt_ring_scratch(unsigned long evt_ring_hdl,
-		union gsi_evt_scratch val)
+		union __packed gsi_evt_scratch val)
 {
 	gsi_writel(val.data.word1, gsi_ctx->base +
 		GSI_EE_n_EV_CH_k_SCRATCH_0_OFFS(evt_ring_hdl,
@@ -1799,7 +1799,7 @@ static void __gsi_write_evt_ring_scratch(unsigned long evt_ring_hdl,
 }
 
 int gsi_write_evt_ring_scratch(unsigned long evt_ring_hdl,
-		union gsi_evt_scratch val)
+		union __packed gsi_evt_scratch val)
 {
 	struct gsi_evt_ctx *ctx;
 
@@ -2549,7 +2549,7 @@ static int gsi_alloc_ap_channel(unsigned int chan_hdl)
 }
 
 static void __gsi_write_channel_scratch(unsigned long chan_hdl,
-		union gsi_channel_scratch val)
+		union __packed gsi_channel_scratch val)
 {
 	gsi_writel(val.data.word1, gsi_ctx->base +
 		GSI_EE_n_GSI_CH_k_SCRATCH_0_OFFS(chan_hdl,
@@ -2567,7 +2567,7 @@ static void __gsi_write_channel_scratch(unsigned long chan_hdl,
 }
 
 int gsi_write_channel_scratch3_reg(unsigned long chan_hdl,
-		union gsi_wdi_channel_scratch3_reg val)
+		union __packed gsi_wdi_channel_scratch3_reg val)
 {
 	struct gsi_chan_ctx *ctx;
 
@@ -2630,7 +2630,7 @@ int gsi_write_channel_scratch2_reg(unsigned long chan_hdl,
 EXPORT_SYMBOL(gsi_write_channel_scratch2_reg);
 
 static void __gsi_read_channel_scratch(unsigned long chan_hdl,
-		union gsi_channel_scratch * val)
+		union __packed gsi_channel_scratch * val)
 {
 	val->data.word1 = gsi_readl(gsi_ctx->base +
 		GSI_EE_n_GSI_CH_k_SCRATCH_0_OFFS(chan_hdl,
@@ -2650,9 +2650,9 @@ static void __gsi_read_channel_scratch(unsigned long chan_hdl,
 }
 
 static union gsi_channel_scratch __gsi_update_mhi_channel_scratch(
-	unsigned long chan_hdl, struct gsi_mhi_channel_scratch mscr)
+	unsigned long chan_hdl, struct __packed gsi_mhi_channel_scratch mscr)
 {
-	union gsi_channel_scratch scr;
+	union __packed gsi_channel_scratch scr;
 
 	/* below sequence is not atomic. assumption is sequencer specific fields
 	 * will remain unchanged across this sequence
@@ -2709,7 +2709,7 @@ static union gsi_channel_scratch __gsi_update_mhi_channel_scratch(
 }
 
 int gsi_write_channel_scratch(unsigned long chan_hdl,
-		union gsi_channel_scratch val)
+		union __packed gsi_channel_scratch val)
 {
 	struct gsi_chan_ctx *ctx;
 
@@ -2739,9 +2739,10 @@ int gsi_write_channel_scratch(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_write_channel_scratch);
 
 int gsi_read_channel_scratch(unsigned long chan_hdl,
-		union gsi_channel_scratch *val)
+		union __packed gsi_channel_scratch *val)
 {
 	struct gsi_chan_ctx *ctx;
 
@@ -2771,9 +2772,10 @@ int gsi_read_channel_scratch(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_read_channel_scratch);
 
 int gsi_update_mhi_channel_scratch(unsigned long chan_hdl,
-		struct gsi_mhi_channel_scratch mscr)
+		struct __packed gsi_mhi_channel_scratch mscr)
 {
 	struct gsi_chan_ctx *ctx;
 
@@ -2802,6 +2804,7 @@ int gsi_update_mhi_channel_scratch(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_update_mhi_channel_scratch);
 
 int gsi_query_channel_db_addr(unsigned long chan_hdl,
 		uint32_t *db_addr_wp_lsb, uint32_t *db_addr_wp_msb)
@@ -2835,6 +2838,7 @@ int gsi_query_channel_db_addr(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_query_channel_db_addr);
 
 int gsi_pending_irq_type(void)
 {
@@ -2920,6 +2924,7 @@ int gsi_start_channel(unsigned long chan_hdl)
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_start_channel);
 
 int gsi_stop_channel(unsigned long chan_hdl)
 {
@@ -2998,6 +3003,7 @@ free_lock:
 	mutex_unlock(&gsi_ctx->mlock);
 	return res;
 }
+EXPORT_SYMBOL(gsi_stop_channel);
 
 int gsi_stop_db_channel(unsigned long chan_hdl)
 {
@@ -3066,6 +3072,7 @@ free_lock:
 	mutex_unlock(&gsi_ctx->mlock);
 	return res;
 }
+EXPORT_SYMBOL(gsi_stop_db_channel);
 
 int gsi_reset_channel(unsigned long chan_hdl)
 {
@@ -3162,6 +3169,7 @@ revrfy_chnlstate:
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_reset_channel);
 
 int gsi_dealloc_channel(unsigned long chan_hdl)
 {
@@ -3233,6 +3241,7 @@ int gsi_dealloc_channel(unsigned long chan_hdl)
 	}
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_dealloc_channel);
 
 void gsi_update_ch_dp_stats(struct gsi_chan_ctx *ctx, uint16_t used)
 {
@@ -3356,6 +3365,7 @@ int gsi_query_channel_info(unsigned long chan_hdl,
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_query_channel_info);
 
 int gsi_is_channel_empty(unsigned long chan_hdl, bool *is_empty)
 {
@@ -3436,6 +3446,7 @@ int gsi_is_channel_empty(unsigned long chan_hdl, bool *is_empty)
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_is_channel_empty);
 
 int __gsi_get_gci_cookie(struct gsi_chan_ctx *ctx, uint16_t idx)
 {
@@ -3647,6 +3658,7 @@ ring_doorbell:
 
 	return GSI_STATUS_SUCCESS;
 }
+EXPORT_SYMBOL(gsi_queue_xfer);
 
 int gsi_start_xfer(unsigned long chan_hdl)
 {
@@ -4548,10 +4560,12 @@ static int msm_gsi_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+#ifdef CONFIG_IPC_LOGGING
 	gsi_ctx->ipc_logbuf = ipc_log_context_create(GSI_IPC_LOG_PAGES,
 		"gsi", 0);
 	if (gsi_ctx->ipc_logbuf == NULL)
 		GSIERR("failed to create IPC log, continue...\n");
+#endif
 
 	gsi_ctx->dev = dev;
 	init_completion(&gsi_ctx->gen_ee_cmd_compl);

@@ -37,17 +37,6 @@
 #define fwol_info(params...) QDF_TRACE_INFO(QDF_MODULE_ID_FWOL, params)
 #define fwol_debug(params...) QDF_TRACE_DEBUG(QDF_MODULE_ID_FWOL, params)
 
-#define fwol_nofl_alert(params...) \
-	QDF_TRACE_FATAL_NO_FL(QDF_MODULE_ID_FWOL, params)
-#define fwol_nofl_err(params...) \
-	QDF_TRACE_ERROR_NO_FL(QDF_MODULE_ID_FWOL, params)
-#define fwol_nofl_warn(params...) \
-	QDF_TRACE_WARN_NO_FL(QDF_MODULE_ID_FWOL, params)
-#define fwol_nofl_info(params...) \
-	QDF_TRACE_INFO_NO_FL(QDF_MODULE_ID_FWOL, params)
-#define fwol_nofl_debug(params...) \
-	QDF_TRACE_DEBUG_NO_FL(QDF_MODULE_ID_FWOL, params)
-
 /**
  * enum wlan_fwol_southbound_event - fw offload south bound event type
  * @WLAN_FWOL_EVT_GET_ELNA_BYPASS_RESPONSE: get eLNA bypass response
@@ -73,10 +62,6 @@ enum wlan_fwol_southbound_event {
  * @bt_interference_high_ll: Lower limit of high level BT interference
  * @bt_interference_high_ul: Upper limit of high level BT interference
  * @btc_mpta_helper_enable: Enable/Disable tri-radio MPTA helper
- * @bt_sco_allow_wlan_2g_scan: Enable/Disble wlan 2g scan when
- *                             BT SCO connection is on
- * @btc_three_way_coex_config_legacy_enable: Enable/Disable tri-radio coex
- *                             config legacy feature
  */
 struct wlan_fwol_coex_config {
 	uint8_t btc_mode;
@@ -92,10 +77,6 @@ struct wlan_fwol_coex_config {
 	int16_t bt_interference_high_ul;
 #ifdef FEATURE_MPTA_HELPER
 	bool    btc_mpta_helper_enable;
-#endif
-	bool bt_sco_allow_wlan_2g_scan;
-#ifdef FEATURE_COEX_CONFIG
-	bool    btc_three_way_coex_config_legacy_enable;
 #endif
 };
 
@@ -177,7 +158,6 @@ struct wlan_fwol_neighbor_report_cfg {
  * @neighbor_report_cfg: 11K neighbor report config
  * @ani_enabled: ANI enable/disable
  * @enable_rts_sifsbursting: Enable RTS SIFS Bursting
- * @enable_sifs_burst: Enable SIFS burst
  * @max_mpdus_inampdu: Max number of MPDUS
  * @enable_phy_reg_retention: Enable PHY reg retention
  * @upper_brssi_thresh: Upper BRSSI threshold
@@ -194,7 +174,6 @@ struct wlan_fwol_neighbor_report_cfg {
  * @is_rate_limit_enabled: Enable/disable RA rate limited
  * @tsf_gpio_pin: TSF GPIO Pin config
  * @tsf_irq_host_gpio_pin: TSF GPIO Pin config
- * @tsf_sync_host_gpio_pin: TSF Sync GPIO Pin config
  * @tsf_ptp_options: TSF Plus feature options config
  * @lprx_enable: LPRx feature enable config
  * @sae_enable: SAE feature enable config
@@ -204,6 +183,7 @@ struct wlan_fwol_neighbor_report_cfg {
  * @enable_dhcp_server_offload: DHCP Offload is enabled or not
  * @dhcp_max_num_clients: Max number of DHCP client supported
  * @dwelltime_params: adaptive dwell time parameters
+ * @disable_hw_assist: Flag to configure HW assist feature in FW
  */
 struct wlan_fwol_cfg {
 	/* Add CFG and INI items here */
@@ -213,7 +193,6 @@ struct wlan_fwol_cfg {
 	struct wlan_fwol_neighbor_report_cfg neighbor_report_cfg;
 	bool ani_enabled;
 	bool enable_rts_sifsbursting;
-	uint8_t enable_sifs_burst;
 	uint8_t max_mpdus_inampdu;
 	uint8_t enable_phy_reg_retention;
 	uint16_t upper_brssi_thresh;
@@ -237,9 +216,6 @@ struct wlan_fwol_cfg {
 #ifdef WLAN_FEATURE_TSF_PLUS_EXT_GPIO_IRQ
 	uint32_t tsf_irq_host_gpio_pin;
 #endif
-#ifdef WLAN_FEATURE_TSF_PLUS_EXT_GPIO_SYNC
-	uint32_t tsf_sync_host_gpio_pin;
-#endif
 #endif
 #endif
 	bool lprx_enable;
@@ -254,6 +230,7 @@ struct wlan_fwol_cfg {
 	uint32_t dhcp_max_num_clients;
 #endif
 	struct adaptive_dwelltime_params dwelltime_params;
+	bool disable_hw_assist;
 };
 
 /**
@@ -365,4 +342,15 @@ fwol_init_adapt_dwelltime_in_cfg(
 QDF_STATUS
 fwol_set_adaptive_dwelltime_config(
 			struct adaptive_dwelltime_params *dwelltime_params);
+
+/**
+ * fwol_configure_hw_assist() - API to configure HW assist feature in FW
+ * @pdev: pointer to the pdev object
+ * @disable_he_assist: Flag to enable/disable HW assist feature
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS fwol_configure_hw_assist(struct wlan_objmgr_pdev *pdev,
+				    bool disable_hw_assist);
+
 #endif

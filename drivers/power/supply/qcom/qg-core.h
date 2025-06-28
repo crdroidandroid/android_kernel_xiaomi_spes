@@ -195,7 +195,6 @@ struct qpnp_qg {
 	int			last_adj_ssoc;
 	int			recharge_soc;
 	int			batt_age_level;
-	int			batt_id;
 	struct alarm		alarm_timer;
 	u32			sdam_data[SDAM_MAX];
 

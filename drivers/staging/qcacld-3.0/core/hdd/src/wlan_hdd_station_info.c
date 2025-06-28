@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -34,13 +34,10 @@
 #include <wlan_hdd_hostapd.h>
 #include <wlan_hdd_station_info.h>
 #include "wlan_mlme_ucfg_api.h"
-#include "wlan_hdd_sta_info.h"
 #include <cdp_txrx_handle.h>
 #include <cdp_txrx_stats_struct.h>
 #include <cdp_txrx_peer_ops.h>
 #include <cdp_txrx_host_stats.h>
-#include "wlan_hdd_object_manager.h"
-
 /*
  * define short names for the global vendor params
  * used by __wlan_hdd_cfg80211_get_station_cmd()
@@ -73,8 +70,6 @@
 	QCA_WLAN_VENDOR_ATTR_GET_STATION_INFO_HT_OPERATION
 #define VHT_OPERATION \
 	QCA_WLAN_VENDOR_ATTR_GET_STATION_INFO_VHT_OPERATION
-#define HE_OPERATION \
-	QCA_WLAN_VENDOR_ATTR_GET_STATION_INFO_HE_OPERATION
 #define INFO_ASSOC_FAIL_REASON \
 	QCA_WLAN_VENDOR_ATTR_GET_STATION_INFO_ASSOC_FAIL_REASON
 #define REMOTE_MAX_PHY_RATE \
@@ -151,6 +146,7 @@ hdd_get_station_policy[STATION_MAX + 1] = {
 	[STATION_REMOTE] = {.type = NLA_BINARY, .len = QDF_MAC_ADDR_SIZE},
 };
 
+#ifdef QCA_SUPPORT_CP_STATS
 static int hdd_get_sta_congestion(struct hdd_adapter *adapter,
 				  uint32_t *congestion)
 {
@@ -164,6 +160,17 @@ static int hdd_get_sta_congestion(struct hdd_adapter *adapter,
 	*congestion = cca_stats.congestion;
 	return 0;
 }
+#else
+static int hdd_get_sta_congestion(struct hdd_adapter *adapter,
+				  uint32_t *congestion)
+{
+	struct hdd_station_ctx *hdd_sta_ctx;
+
+	hdd_sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
+	*congestion = hdd_sta_ctx->conn_info.cca;
+	return 0;
+}
+#endif
 
 /**
  * hdd_get_station_assoc_fail() - Handle get station assoc fail
@@ -407,7 +414,6 @@ static void hdd_get_max_tx_bitrate(struct hdd_context *hdd_ctx,
 	uint8_t tx_mcs_index, tx_nss = 1;
 	uint16_t my_tx_rate;
 	struct hdd_station_ctx *hdd_sta_ctx;
-	struct wlan_objmgr_vdev *vdev;
 
 	hdd_sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
 
@@ -419,22 +425,14 @@ static void hdd_get_max_tx_bitrate(struct hdd_context *hdd_ctx,
 	my_tx_rate = adapter->hdd_stats.class_a_stat.tx_rate;
 
 	if (!(tx_rate_flags & TX_RATE_LEGACY)) {
-		vdev = hdd_objmgr_get_vdev(adapter);
-		if (vdev) {
-			/*
-			 * Take static NSS for reporting max rates.
-			 * NSS from FW is not reliable as it changes
-			 * as per the environment quality.
-			 */
-			tx_nss = wlan_vdev_mlme_get_nss(vdev);
-			hdd_objmgr_put_vdev(vdev);
-		} else {
-			tx_nss = adapter->hdd_stats.class_a_stat.tx_nss;
+		tx_nss = adapter->hdd_stats.class_a_stat.tx_nss;
+		if (tx_nss > 1 &&
+		    policy_mgr_is_current_hwmode_dbs(hdd_ctx->psoc) &&
+		    !policy_mgr_is_hw_dbs_2x2_capable(hdd_ctx->psoc)) {
+			hdd_debug("Hw mode is DBS, Reduce nss(%d) to 1",
+				  tx_nss);
+			tx_nss--;
 		}
-		hdd_check_and_update_nss(hdd_ctx, &tx_nss, NULL);
-
-		if (tx_mcs_index == INVALID_MCS_IDX)
-			tx_mcs_index = 0;
 	}
 	if (hdd_report_max_rate(hdd_ctx->mac_handle, &sinfo.txrate,
 				sinfo.signal, tx_rate_flags, tx_mcs_index,
@@ -511,7 +509,7 @@ static int32_t hdd_add_survey_info(struct sk_buff *skb,
 	if (!nla_attr)
 		goto fail;
 	if (nla_put_u32(skb, NL80211_SURVEY_INFO_FREQUENCY,
-			hdd_sta_ctx->cache_conn_info.chan_freq) ||
+			hdd_sta_ctx->cache_conn_info.freq) ||
 	    nla_put_u8(skb, NL80211_SURVEY_INFO_NOISE,
 		       (hdd_sta_ctx->cache_conn_info.noise + 100))) {
 		hdd_err("put fail");
@@ -615,47 +613,6 @@ fail:
 	return -EINVAL;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)) && \
-     defined(WLAN_FEATURE_11AX)
-static int32_t hdd_add_he_oper_info(
-				struct sk_buff *skb,
-				struct hdd_station_ctx *hdd_sta_ctx)
-{
-	int32_t ret = 0;
-
-	if (!hdd_sta_ctx->cache_conn_info.he_oper_len ||
-	    !hdd_sta_ctx->cache_conn_info.he_operation)
-		return ret;
-
-	if (nla_put(skb, HE_OPERATION,
-		    hdd_sta_ctx->cache_conn_info.he_oper_len,
-		     hdd_sta_ctx->cache_conn_info.he_operation))
-		ret = -EINVAL;
-
-	qdf_mem_free(hdd_sta_ctx->cache_conn_info.he_operation);
-	hdd_sta_ctx->cache_conn_info.he_operation = NULL;
-	hdd_sta_ctx->cache_conn_info.he_oper_len = 0;
-	return ret;
-}
-
-static int32_t hdd_get_he_op_len(struct hdd_station_ctx *hdd_sta_ctx)
-{
-	return hdd_sta_ctx->cache_conn_info.he_oper_len;
-}
-#else
-static inline uint32_t hdd_add_he_oper_info(
-					struct sk_buff *skb,
-					struct hdd_station_ctx *hdd_sta_ctx)
-{
-	return 0;
-}
-
-static uint32_t hdd_get_he_op_len(struct hdd_station_ctx *hdd_sta_ctx)
-{
-	return 0;
-}
-#endif
-
 /**
  * hdd_get_station_info() - send BSS information to supplicant
  * @hdd_ctx: pointer to hdd context
@@ -668,7 +625,7 @@ static int hdd_get_station_info(struct hdd_context *hdd_ctx,
 {
 	struct sk_buff *skb = NULL;
 	uint8_t *tmp_hs20 = NULL, *ies = NULL;
-	uint32_t nl_buf_len, ie_len = 0, hdd_he_op_len = 0;
+	uint32_t nl_buf_len, ie_len = 0;
 	struct hdd_station_ctx *hdd_sta_ctx;
 	QDF_STATUS status;
 
@@ -678,7 +635,7 @@ static int hdd_get_station_info(struct hdd_context *hdd_ctx,
 	nl_buf_len += sizeof(hdd_sta_ctx->
 				cache_conn_info.last_ssid.SSID.length) +
 		      QDF_MAC_ADDR_SIZE +
-		      sizeof(hdd_sta_ctx->cache_conn_info.chan_freq) +
+		      sizeof(hdd_sta_ctx->cache_conn_info.freq) +
 		      sizeof(hdd_sta_ctx->cache_conn_info.noise) +
 		      sizeof(hdd_sta_ctx->cache_conn_info.signal) +
 		      (sizeof(uint32_t) * 2) +
@@ -708,9 +665,6 @@ static int hdd_get_station_info(struct hdd_context *hdd_ctx,
 						&ies, &ie_len);
 	if (QDF_IS_STATUS_SUCCESS(status))
 		nl_buf_len += ie_len;
-
-	hdd_he_op_len = hdd_get_he_op_len(hdd_sta_ctx);
-	nl_buf_len += hdd_he_op_len;
 
 	skb = cfg80211_vendor_cmd_alloc_reply_skb(hdd_ctx->wiphy, nl_buf_len);
 	if (!skb) {
@@ -754,10 +708,6 @@ static int hdd_get_station_info(struct hdd_context *hdd_ctx,
 			hdd_err("put fail");
 			goto fail;
 		}
-	if (hdd_add_he_oper_info(skb, hdd_sta_ctx)) {
-		hdd_err("put fail");
-		goto fail;
-	}
 	if (hdd_sta_ctx->cache_conn_info.conn_flag.hs20_present)
 		if (nla_put(skb, AP_INFO_HS20_INDICATION,
 			    (sizeof(hdd_sta_ctx->cache_conn_info.hs20vendor_ie)
@@ -1097,33 +1047,29 @@ static uint8_t hdd_decode_ch_width(tSirMacHTChannelWidth ch_width)
 
 /**
  * hdd_get_peer_stats - get the peer stats
- * @vdev_id: vdev id
  * @mac_addr: mac address
  * @stainfo: station info pointer
  *
  * Return: None
  */
-static void hdd_get_peer_stats(uint8_t vdev_id,
-			       struct qdf_mac_addr mac_addr,
+static void hdd_get_peer_stats(struct qdf_mac_addr mac_addr,
 			       struct hdd_station_info *stainfo)
 {
 	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
+	struct cdp_pdev *txrx_pdev = cds_get_context(QDF_MODULE_ID_TXRX);
+	struct cdp_peer *peer;
+	uint8_t peer_id;
 	struct cdp_peer_stats *peer_stats;
-	QDF_STATUS status;
 
-	peer_stats = qdf_mem_malloc(sizeof(*peer_stats));
-	if (!peer_stats)
-		return;
-
-	status = cdp_host_get_peer_stats(soc, vdev_id, mac_addr.bytes,
-					 peer_stats);
-	if (status == QDF_STATUS_SUCCESS) {
-		stainfo->rx_retry_cnt = peer_stats->rx.rx_retries;
-		stainfo->rx_mc_bc_cnt = peer_stats->rx.multicast.num +
-					peer_stats->rx.bcast.num;
+	peer = cdp_peer_find_by_addr(soc, txrx_pdev, mac_addr.bytes, &peer_id);
+	if (peer) {
+		peer_stats = cdp_host_get_peer_stats(soc, peer);
+		if (peer_stats) {
+			stainfo->rx_retry_cnt = peer_stats->rx.rx_retries;
+			stainfo->rx_mc_bc_cnt = peer_stats->rx.multicast.num +
+						peer_stats->rx.bcast.num;
+		}
 	}
-
-	qdf_mem_free(peer_stats);
 }
 
 /**
@@ -1141,18 +1087,16 @@ static int hdd_get_cached_station_remote(struct hdd_context *hdd_ctx,
 					 struct hdd_adapter *adapter,
 					 struct qdf_mac_addr mac_addr)
 {
-	struct hdd_station_info *stainfo;
+	struct hdd_station_info *stainfo = hdd_get_stainfo(
+						adapter->cache_sta_info,
+						mac_addr);
 	struct sk_buff *skb = NULL;
 	uint32_t nl_buf_len = NLMSG_HDRLEN;
 	uint8_t channel_width;
 
-	stainfo = hdd_get_sta_info_by_mac(&adapter->cache_sta_info_list,
-					  mac_addr.bytes,
-					  STA_INFO_GET_CACHED_STATION_REMOTE);
-
 	if (!stainfo) {
-		hdd_err("peer " QDF_MAC_ADDR_FMT " not found",
-			QDF_MAC_ADDR_REF(mac_addr.bytes));
+		hdd_err("peer " QDF_MAC_ADDR_STR " not found",
+			QDF_MAC_ADDR_ARRAY(mac_addr.bytes));
 		return -EINVAL;
 	}
 
@@ -1173,9 +1117,6 @@ static int hdd_get_cached_station_remote(struct hdd_context *hdd_ctx,
 
 	skb = cfg80211_vendor_cmd_alloc_reply_skb(hdd_ctx->wiphy, nl_buf_len);
 	if (!skb) {
-		hdd_put_sta_info_ref(&adapter->cache_sta_info_list,
-				     &stainfo, true,
-				     STA_INFO_GET_CACHED_STATION_REMOTE);
 		hdd_err("cfg80211_vendor_cmd_alloc_reply_skb failed");
 		return -ENOMEM;
 	}
@@ -1201,13 +1142,11 @@ static int hdd_get_cached_station_remote(struct hdd_context *hdd_ctx,
 		hdd_err("remote ch put fail");
 		goto fail;
 	}
-	/* Convert the data from kbps to mbps as expected by the user space */
-	if (nla_put_u32(skb, REMOTE_LAST_TX_RATE, stainfo->tx_rate / 1000)) {
+	if (nla_put_u32(skb, REMOTE_LAST_TX_RATE, stainfo->tx_rate)) {
 		hdd_err("tx rate put fail");
 		goto fail;
 	}
-	/* Convert the data from kbps to mbps as expected by the user space */
-	if (nla_put_u32(skb, REMOTE_LAST_RX_RATE, stainfo->rx_rate / 1000)) {
+	if (nla_put_u32(skb, REMOTE_LAST_RX_RATE, stainfo->rx_rate)) {
 		hdd_err("rx rate put fail");
 		goto fail;
 	}
@@ -1242,18 +1181,19 @@ static int hdd_get_cached_station_remote(struct hdd_context *hdd_ctx,
 			hdd_err("Failed to put assoc req IEs");
 			goto fail;
 		}
+		qdf_mem_free(stainfo->assoc_req_ies.data);
+		stainfo->assoc_req_ies.data = NULL;
+		stainfo->assoc_req_ies.len = 0;
 	}
-	hdd_sta_info_detach(&adapter->cache_sta_info_list, &stainfo);
-	hdd_put_sta_info_ref(&adapter->cache_sta_info_list, &stainfo, true,
-			     STA_INFO_GET_CACHED_STATION_REMOTE);
-	qdf_atomic_dec(&adapter->cache_sta_count);
+	qdf_mem_zero(stainfo, sizeof(*stainfo));
 
 	return cfg80211_vendor_cmd_reply(skb);
 fail:
-	hdd_put_sta_info_ref(&adapter->cache_sta_info_list, &stainfo, true,
-			     STA_INFO_GET_CACHED_STATION_REMOTE);
 	if (skb)
 		kfree_skb(skb);
+	qdf_mem_free(stainfo->assoc_req_ies.data);
+	stainfo->assoc_req_ies.data = NULL;
+	stainfo->assoc_req_ies.len = 0;
 
 	return -EINVAL;
 }
@@ -1295,7 +1235,7 @@ static int hdd_get_connected_station_info(struct hdd_context *hdd_ctx,
 		(NLA_ALIGN(sizeof(stainfo->dot11_mode)) + NLA_HDRLEN) +
 		(NLA_ALIGN(sizeof(stainfo->mode)) + NLA_HDRLEN);
 
-	hdd_get_peer_stats(adapter->vdev_id, mac_addr, stainfo);
+	hdd_get_peer_stats(mac_addr, stainfo);
 
 	status = ucfg_mlme_get_sap_get_peer_info(hdd_ctx->psoc, &value);
 	if (status != QDF_STATUS_SUCCESS)
@@ -1480,13 +1420,10 @@ static int hdd_get_station_remote(struct hdd_context *hdd_ctx,
 				  struct hdd_adapter *adapter,
 				  struct qdf_mac_addr mac_addr)
 {
+	struct hdd_station_info *stainfo = hdd_get_stainfo(adapter->sta_info,
+							   mac_addr);
 	int status = 0;
 	bool is_associated = false;
-	struct hdd_station_info *stainfo =
-			hdd_get_sta_info_by_mac(
-					&adapter->sta_info_list,
-					mac_addr.bytes,
-					STA_INFO_HDD_GET_STATION_REMOTE);
 
 	if (!stainfo) {
 		status = hdd_get_cached_station_remote(hdd_ctx, adapter,
@@ -1498,15 +1435,11 @@ static int hdd_get_station_remote(struct hdd_context *hdd_ctx,
 	if (!is_associated) {
 		status = hdd_get_cached_station_remote(hdd_ctx, adapter,
 						       mac_addr);
-		hdd_put_sta_info_ref(&adapter->sta_info_list, &stainfo, true,
-				     STA_INFO_HDD_GET_STATION_REMOTE);
 		return status;
 	}
 
 	status = hdd_get_connected_station_info(hdd_ctx, adapter,
 						mac_addr, stainfo);
-	hdd_put_sta_info_ref(&adapter->sta_info_list, &stainfo, true,
-			     STA_INFO_HDD_GET_STATION_REMOTE);
 	return status;
 }
 
@@ -1572,8 +1505,8 @@ __hdd_cfg80211_get_station_cmd(struct wiphy *wiphy,
 		nla_memcpy(mac_addr.bytes, tb[STATION_REMOTE],
 			   QDF_MAC_ADDR_SIZE);
 
-		hdd_debug("STATION_REMOTE " QDF_MAC_ADDR_FMT,
-			  QDF_MAC_ADDR_REF(mac_addr.bytes));
+		hdd_debug("STATION_REMOTE " QDF_MAC_ADDR_STR,
+			  QDF_MAC_ADDR_ARRAY(mac_addr.bytes));
 
 		status = hdd_get_station_remote(hdd_ctx, adapter, mac_addr);
 	} else {

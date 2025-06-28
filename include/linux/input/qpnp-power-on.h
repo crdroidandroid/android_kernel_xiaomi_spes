@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2012-2015, 2017-2019, The Linux Foundation.
- * Copyright (C) 2020 XiaoMi, Inc.
  * All rights reserved.
  */
 
@@ -55,11 +54,8 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_DMVERITY_CORRUPTED	= 0x04,
 	PON_RESTART_REASON_DMVERITY_ENFORCE	= 0x05,
 	PON_RESTART_REASON_KEYS_CLEAR		= 0x06,
- 	/* 32 ~ 63 for OEMs/ODMs secific features */
- 	PON_RESTART_REASON_OEM_MIN		= 0x20,
-	PON_RESTART_REASON_PANIC		= 0x21,
-	PON_RESTART_REASON_NORMAL		= 0x22,
- 	PON_RESTART_REASON_OEM_MAX		= 0x3f,
+	PON_RESTART_REASON_NORMAL		= 0x20,
+	PON_RESTART_REASON_PANIC		= 0x21
 };
 
 #ifdef CONFIG_INPUT_QPNP_POWER_ON
@@ -69,10 +65,10 @@ int qpnp_pon_trigger_config(enum pon_trigger_source pon_src, bool enable);
 int qpnp_pon_wd_config(bool enable);
 int qpnp_pon_set_restart_reason(enum pon_restart_reason reason);
 bool qpnp_pon_check_hard_reset_stored(void);
-int qpnp_pon_is_lpk(void);
-int qpnp_pon_is_ps_hold_reset(void);
 int qpnp_pon_modem_pwr_off(enum pon_power_off_type type);
 
+int qpnp_pon_is_lpk(void);
+int qpnp_pon_is_ps_hold_reset(void);
 #else
 
 static int qpnp_pon_system_pwr_off(enum pon_power_off_type type)
@@ -106,17 +102,17 @@ static inline bool qpnp_pon_check_hard_reset_stored(void)
 	return false;
 }
 
+static inline int qpnp_pon_modem_pwr_off(enum pon_power_off_type type)
+{
+	return -ENODEV;
+}
+
 static inline int qpnp_pon_is_lpk(void)
 {
 	return -ENODEV;
 }
 
 static inline int qpnp_pon_is_ps_hold_reset(void)
-{
-	return -ENODEV;
-}
-
-static inline int qpnp_pon_modem_pwr_off(enum pon_power_off_type type)
 {
 	return -ENODEV;
 }

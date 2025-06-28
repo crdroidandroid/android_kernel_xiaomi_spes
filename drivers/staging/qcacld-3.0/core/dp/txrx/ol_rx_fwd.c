@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2014-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011, 2014-2019, 2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -149,6 +149,7 @@ ol_rx_fwd_check(struct ol_txrx_vdev_t *vdev,
 	while (msdu) {
 		struct ol_txrx_vdev_t *tx_vdev;
 		void *rx_desc;
+		uint16_t off = 0;
 		/*
 		 * Remember the next list elem, because our processing
 		 * may cause the MSDU to get linked into a different list.
@@ -190,7 +191,8 @@ ol_rx_fwd_check(struct ol_txrx_vdev_t *vdev,
 						 QDF_NBUF_TX_EXT_TID_INVALID);
 			}
 
-			if (!ol_txrx_fwd_desc_thresh_check(vdev)) {
+			if (!ol_txrx_fwd_desc_thresh_check(
+						(struct cdp_vdev *)vdev)) {
 				/* Drop the packet*/
 				htt_rx_msdu_desc_free(pdev->htt_pdev, msdu);
 				TXRX_STATS_MSDU_LIST_INCR(
@@ -199,6 +201,26 @@ ol_rx_fwd_check(struct ol_txrx_vdev_t *vdev,
 				qdf_nbuf_set_next(msdu, NULL);
 				qdf_nbuf_tx_free(msdu,
 						 QDF_NBUF_PKT_ERROR);
+				msdu = msdu_list;
+				continue;
+			}
+
+			if (pdev->cfg.is_high_latency)
+				off = htt_rx_msdu_rx_desc_size_hl(
+								 pdev->htt_pdev,
+								 rx_desc);
+
+			if (vdev->opmode == wlan_op_mode_ap &&
+			    __qdf_nbuf_data_is_ipv4_eapol_pkt(
+						   qdf_nbuf_data(msdu) + off) &&
+			    qdf_mem_cmp(qdf_nbuf_data(msdu) +
+					QDF_NBUF_DEST_MAC_OFFSET,
+					vdev->mac_addr.raw,
+					QDF_MAC_ADDR_SIZE)) {
+				TXRX_STATS_MSDU_LIST_INCR(
+					pdev, tx.dropped.host_reject, msdu);
+				qdf_nbuf_set_next(msdu, NULL);
+				qdf_nbuf_tx_free(msdu, QDF_NBUF_PKT_ERROR);
 				msdu = msdu_list;
 				continue;
 			}
@@ -254,17 +276,14 @@ ol_rx_fwd_check(struct ol_txrx_vdev_t *vdev,
 /*
  * ol_get_intra_bss_fwd_pkts_count() - to get the total tx and rx packets
  *   that has been forwarded from txrx layer without going to upper layers.
- * @soc_hdl: Datapath soc handle
  * @vdev_id: vdev id
  * @fwd_tx_packets: pointer to forwarded tx packets count parameter
  * @fwd_rx_packets: pointer to forwarded rx packets count parameter
  *
  * Return: status -> A_OK - success, A_ERROR - failure
  */
-A_STATUS ol_get_intra_bss_fwd_pkts_count(struct cdp_soc_t *soc_hdl,
-					 uint8_t vdev_id,
-					 uint64_t *fwd_tx_packets,
-					 uint64_t *fwd_rx_packets)
+A_STATUS ol_get_intra_bss_fwd_pkts_count(uint8_t vdev_id,
+		uint64_t *fwd_tx_packets, uint64_t *fwd_rx_packets)
 {
 	struct ol_txrx_vdev_t *vdev = NULL;
 

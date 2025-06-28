@@ -17,9 +17,15 @@ endif
 
 ifeq ($(KERNEL_BUILD), 0)
 	ifeq ($(CONFIG_ARCH_BENGAL), y)
-		include $(AUDIO_ROOT)/config/bengalauto.conf
-		export
-		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+			ifdef CONFIG_TARGET_PROJECT_K7T
+				include $(AUDIO_ROOT)/config/spesauto.conf
+				export
+				INCS    +=  -include $(AUDIO_ROOT)/config/spesautoconf.h
+			else
+				include $(AUDIO_ROOT)/config/bengalauto.conf
+				export
+				INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+			endif
 	endif
 endif
 
@@ -114,6 +120,3 @@ rouleur_slave_dlkm-y := $(ROULEUR_SLAVE_OBJS)
 
 obj-$(CONFIG_PM2250_SPMI) += pm2250_spmi_dlkm.o
 pm2250_spmi_dlkm-y := $(PM2250_SPMI_OBJS)
-
-# inject some build related information
-DEFINES += -DBUILD_TIMESTAMP=\"$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')\"

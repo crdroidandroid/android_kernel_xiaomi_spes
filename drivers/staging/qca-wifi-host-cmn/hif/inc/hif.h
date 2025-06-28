@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,7 +38,6 @@ extern "C" {
 #ifdef IPA_OFFLOAD
 #include <linux/ipa.h>
 #endif
-#include "cfg_ucfg_api.h"
 #include "qdf_dev.h"
 #define ENABLE_MBOX_DUMMY_SPACE_FEATURE 1
 
@@ -64,9 +63,6 @@ typedef void *hif_handle_t;
 #define HIF_TYPE_QCA6390 18
 #define HIF_TYPE_QCA8074V2 19
 #define HIF_TYPE_QCA6018  20
-#define HIF_TYPE_QCN9000 21
-#define HIF_TYPE_QCA6490 22
-#define HIF_TYPE_QCA6750 23
 
 #ifdef IPA_OFFLOAD
 #define DMA_COHERENT_MASK_IPA_VER_3_AND_ABOVE   37
@@ -119,8 +115,16 @@ struct CE_state;
 #define CE_COUNT_MAX 12
 #define HIF_MAX_GRP_IRQ 16
 
-#ifndef HIF_MAX_GROUP
+#ifdef CONFIG_WIN
+#define HIF_MAX_GROUP 12
+#else
 #define HIF_MAX_GROUP 7
+#endif
+
+#ifdef CONFIG_SLUB_DEBUG_ON
+#ifndef CONFIG_WIN
+#define HIF_CONFIG_SLUB_DEBUG_ON
+#endif
 #endif
 
 #ifndef NAPI_YIELD_BUDGET_BASED
@@ -466,8 +470,8 @@ enum hif_disable_type {
  * enum hif_device_config_opcode: configure mode
  *
  * @HIF_DEVICE_POWER_STATE: device power state
- * @HIF_DEVICE_GET_BLOCK_SIZE: get block size
- * @HIF_DEVICE_GET_ADDR: get block address
+ * @HIF_DEVICE_GET_MBOX_BLOCK_SIZE: get mbox block size
+ * @HIF_DEVICE_GET_MBOX_ADDR: get mbox block address
  * @HIF_DEVICE_GET_PENDING_EVENTS_FUNC: get pending events functions
  * @HIF_DEVICE_GET_IRQ_PROC_MODE: get irq proc mode
  * @HIF_DEVICE_GET_RECV_EVENT_MASK_UNMASK_FUNC: receive event function
@@ -535,8 +539,6 @@ struct htc_callbacks {
  * @is_load_unload_in_progress: Query if driver state Load/Unload in Progress
  * @is_driver_unloading: Query if driver is unloading.
  * @get_bandwidth_level: Query current bandwidth level for the driver
- * @prealloc_get_consistent_mem_unligned: get prealloc unaligned consistent mem
- * @prealloc_put_consistent_mem_unligned: put unaligned consistent mem to pool
  * This Structure provides callback pointer for HIF to query hdd for driver
  * states.
  */
@@ -548,12 +550,6 @@ struct hif_driver_state_callbacks {
 	bool (*is_driver_unloading)(void *context);
 	bool (*is_target_ready)(void *context);
 	int (*get_bandwidth_level)(void *context);
-#ifdef DP_MEM_PRE_ALLOC
-	void *(*prealloc_get_consistent_mem_unaligned)(qdf_size_t size,
-						       qdf_dma_addr_t *paddr,
-						       uint32_t ring_type);
-	void (*prealloc_put_consistent_mem_unaligned)(void *vaddr);
-#endif
 };
 
 /* This API detaches the HTC layer from the HIF device */
@@ -680,7 +676,6 @@ struct hif_msg_callbacks {
 					uint8_t pipeID);
 	void (*txResourceAvailHandler)(void *context, uint8_t pipe);
 	void (*fwEventHandler)(void *context, QDF_STATUS status);
-	void (*update_bundle_stats)(void *context, uint8_t no_of_pkt_in_bundle);
 };
 
 enum hif_target_status {
@@ -841,35 +836,15 @@ void hif_disable_isr(struct hif_opaque_softc *hif_ctx);
 void hif_reset_soc(struct hif_opaque_softc *hif_ctx);
 void hif_save_htc_htt_config_endpoint(struct hif_opaque_softc *hif_ctx,
 				      int htc_htt_tx_endpoint);
-
-/**
- * hif_open() - Create hif handle
- * @qdf_ctx: qdf context
- * @mode: Driver Mode
- * @bus_type: Bus Type
- * @cbk: CDS Callbacks
- * @psoc: psoc object manager
- *
- * API to open HIF Context
- *
- * Return: HIF Opaque Pointer
- */
-struct hif_opaque_softc *hif_open(qdf_device_t qdf_ctx,
-				  uint32_t mode,
+struct hif_opaque_softc *hif_open(qdf_device_t qdf_ctx, uint32_t mode,
 				  enum qdf_bus_type bus_type,
-				  struct hif_driver_state_callbacks *cbk,
-				  struct wlan_objmgr_psoc *psoc);
-
+				  struct hif_driver_state_callbacks *cbk);
 void hif_close(struct hif_opaque_softc *hif_ctx);
 QDF_STATUS hif_enable(struct hif_opaque_softc *hif_ctx, struct device *dev,
 		      void *bdev, const struct hif_bus_id *bid,
 		      enum qdf_bus_type bus_type,
 		      enum hif_enable_type type);
 void hif_disable(struct hif_opaque_softc *hif_ctx, enum hif_disable_type type);
-#ifdef CE_TASKLET_DEBUG_ENABLE
-void hif_enable_ce_latency_stats(struct hif_opaque_softc *hif_ctx,
-				 uint8_t value);
-#endif
 void hif_display_stats(struct hif_opaque_softc *hif_ctx);
 void hif_clear_stats(struct hif_opaque_softc *hif_ctx);
 
@@ -1239,50 +1214,6 @@ void hif_clear_napi_stats(struct hif_opaque_softc *hif_ctx);
 }
 #endif
 
-#ifdef FORCE_WAKE
-/**
- * hif_force_wake_request() - Function to wake from power collapse
- * @handle: HIF opaque handle
- *
- * Description: API to check if the device is awake or not before
- * read/write to BAR + 4K registers. If device is awake return
- * success otherwise write '1' to
- * PCIE_PCIE_LOCAL_REG_PCIE_SOC_WAKE_PCIE_LOCAL_REG which will interrupt
- * the device and does wakeup the PCI and MHI within 50ms
- * and then the device writes a value to
- * PCIE_SOC_PCIE_REG_PCIE_SCRATCH_0_SOC_PCIE_REG to complete the
- * handshake process to let the host know the device is awake.
- *
- * Return: zero - success/non-zero - failure
- */
-int hif_force_wake_request(struct hif_opaque_softc *handle);
-
-/**
- * hif_force_wake_release() - API to release/reset the SOC wake register
- * from interrupting the device.
- * @handle: HIF opaque handle
- *
- * Description: API to set the
- * PCIE_PCIE_LOCAL_REG_PCIE_SOC_WAKE_PCIE_LOCAL_REG to '0'
- * to release the interrupt line.
- *
- * Return: zero - success/non-zero - failure
- */
-int hif_force_wake_release(struct hif_opaque_softc *handle);
-#else
-static inline
-int hif_force_wake_request(struct hif_opaque_softc *handle)
-{
-	return 0;
-}
-
-static inline
-int hif_force_wake_release(struct hif_opaque_softc *handle)
-{
-	return 0;
-}
-#endif /* FORCE_WAKE */
-
 #ifdef FEATURE_HAL_DELAYED_REG_WRITE
 /**
  * hif_prevent_link_low_power_states() - Prevent from going to low power states
@@ -1377,8 +1308,7 @@ hif_get_ce_service_max_yield_time(struct hif_opaque_softc *hif);
  * Return: void
  */
 void hif_set_ce_service_max_rx_ind_flush(struct hif_opaque_softc *hif,
-					 uint8_t ce_service_max_rx_ind_flush);
-
+				       uint8_t ce_service_max_rx_ind_flush);
 #ifdef OL_ATH_SMART_LOGGING
 /*
  * hif_log_ce_dump() - Copy all the CE DEST ring to buf
@@ -1399,39 +1329,6 @@ uint8_t *hif_log_dump_ce(struct hif_softc *scn, uint8_t *buf_cur,
 			 uint32_t ce, uint32_t skb_sz);
 #endif /* OL_ATH_SMART_LOGGING */
 
-/*
- * hif_softc_to_hif_opaque_softc - API to convert hif_softc handle
- * to hif_opaque_softc handle
- * @hif_handle - hif_softc type
- *
- * Return: hif_opaque_softc type
- */
-static inline struct hif_opaque_softc *
-hif_softc_to_hif_opaque_softc(struct hif_softc *hif_handle)
-{
-	return (struct hif_opaque_softc *)hif_handle;
-}
-
-#ifdef FORCE_WAKE
-/**
- * hif_srng_init_phase(): Indicate srng initialization phase
- * to avoid force wake as UMAC power collapse is not yet
- * enabled
- * @hif_ctx: hif opaque handle
- * @init_phase: initialization phase
- *
- * Return:  None
- */
-void hif_srng_init_phase(struct hif_opaque_softc *hif_ctx,
-			 bool init_phase);
-#else
-static inline
-void hif_srng_init_phase(struct hif_opaque_softc *hif_ctx,
-			 bool init_phase)
-{
-}
-#endif /* FORCE_WAKE */
-
 #ifdef HIF_CPU_PERF_AFFINE_MASK
 /**
  * hif_config_irq_set_perf_affinity_hint() - API to set affinity
@@ -1448,25 +1345,6 @@ void hif_config_irq_set_perf_affinity_hint(
 #else
 static inline void hif_config_irq_set_perf_affinity_hint(
 	struct hif_opaque_softc *hif_ctx)
-{
-}
-#endif
-
-#ifdef HIF_CE_LOG_INFO
-/**
- * hif_log_ce_info() - API to log ce info
- * @scn: hif handle
- * @data: hang event data buffer
- * @offset: offset at which data needs to be written
- *
- * Return:  None
- */
-void hif_log_ce_info(struct hif_softc *scn, uint8_t *data,
-		     unsigned int *offset);
-#else
-static inline
-void hif_log_ce_info(struct hif_softc *scn, uint8_t *data,
-		     unsigned int *offset)
 {
 }
 #endif

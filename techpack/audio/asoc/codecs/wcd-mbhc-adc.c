@@ -23,7 +23,7 @@
 #include <asoc/wcd-mbhc-v2.h>
 #include <asoc/pdata.h>
 
-#define WCD_MBHC_ADC_HS_THRESHOLD_MV    1700
+#define WCD_MBHC_ADC_HS_THRESHOLD_MV    1770
 #define WCD_MBHC_ADC_HPH_THRESHOLD_MV   75
 #define WCD_MBHC_ADC_MICBIAS_MV         1800
 #define WCD_MBHC_FAKE_INS_RETRY         4
@@ -682,12 +682,10 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	enum wcd_mbhc_plug_type plug_type = MBHC_PLUG_TYPE_INVALID;
 	unsigned long timeout;
 	bool wrk_complete = false;
-	bool is_pa_on = false, spl_hs = false, spl_hs_reported = false;
-#if !defined(CONFIG_MACH_XIAOMI_LIME) || !defined(CONFIG_MACH_POCO_CITRUS)
 	int pt_gnd_mic_swap_cnt = 0;
 	int no_gnd_mic_swap_cnt = 0;
+	bool is_pa_on = false, spl_hs = false, spl_hs_reported = false;
 	int ret = 0;
-#endif
 	int spl_hs_count = 0;
 	int output_mv = 0;
 	int cross_conn;
@@ -804,7 +802,6 @@ correct_plug_type:
 			is_pa_on = mbhc->mbhc_cb->hph_pa_on_status(
 					mbhc->component);
 
-#if !defined(CONFIG_MACH_XIAOMI_LIME) || !defined(CONFIG_MACH_POCO_CITRUS)
 		if ((output_mv <= hs_threshold) &&
 		    (!is_pa_on)) {
 			/* Check for cross connection*/
@@ -858,7 +855,6 @@ correct_plug_type:
 				}
 			}
 		}
-#endif
 
 		if (output_mv > hs_threshold) {
 			pr_debug("%s: cable is extension cable\n", __func__);
